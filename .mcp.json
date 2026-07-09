@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "omp-orchestrator": {
+      "command": "node",
+      "args": ["./mcp/server.mjs"],
+      "cwd": "."
+    }
+  }
+}

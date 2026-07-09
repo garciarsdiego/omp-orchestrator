@@ -1,0 +1,19 @@
+{
+  "name": "omp-orchestrator",
+  "version": "0.4.0",
+  "description": "Codex-led orchestration over the locally installed Oh My Pi multi-provider runtime.",
+  "author": {
+    "name": "Diego"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "OMP Orchestrator",
+    "shortDescription": "Coordinate OMP providers with Codex review.",
+    "longDescription": "Run isolated, budgeted multi-provider DAG pipelines through Oh My Pi with persistent checkpoints, deterministic contracts, provenance, and Codex final attestation.",
+    "developerName": "Diego",
+    "category": "Developer Tools",
+    "capabilities": ["OMP diagnostics", "model discovery", "role inspection", "local broker and gateway runtime", "persistent inference jobs", "isolated DAG runs", "budget estimation", "output contract validation", "Codex attestation", "orchestration guidance"],
+    "defaultPrompt": "Inspect my OMP setup and propose a safe multi-provider execution plan with Codex as final reviewer."
+  },
+  "mcpServers": "./.mcp.json"
+}
