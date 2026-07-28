@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -119,7 +119,96 @@ function migrate(db) {
         payload TEXT NOT NULL
       );
     `
+  }, {
+    version: 2,
+    name: "consumption_governance",
+    sql: `
+      CREATE TABLE pricing_snapshots (
+        digest TEXT PRIMARY KEY,
+        revision TEXT NOT NULL,
+        loaded_at TEXT NOT NULL,
+        payload TEXT NOT NULL
+      );
+
+      CREATE TABLE consumption_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at TEXT NOT NULL,
+        run_id TEXT,
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        attempt INTEGER NOT NULL,
+        selector TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL,
+        cached_input_tokens INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL,
+        total_tokens INTEGER NOT NULL,
+        duration_ms INTEGER,
+        registry_digest TEXT,
+        pricing_status TEXT NOT NULL,
+        match_tier TEXT NOT NULL,
+        equivalent_low_usd REAL,
+        equivalent_high_usd REAL,
+        currency TEXT NOT NULL,
+        UNIQUE(job_id, attempt)
+      );
+      CREATE INDEX consumption_job ON consumption_events(job_id);
+      CREATE INDEX consumption_run ON consumption_events(run_id);
+
+      CREATE TABLE policy_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at TEXT NOT NULL,
+        run_id TEXT,
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        attempt INTEGER NOT NULL,
+        scope TEXT NOT NULL,
+        limit_name TEXT NOT NULL,
+        threshold_value REAL,
+        observed_value REAL,
+        mode TEXT NOT NULL,
+        action_taken TEXT NOT NULL,
+        payload TEXT NOT NULL
+      );
+      CREATE INDEX policy_job ON policy_events(job_id);
+      CREATE INDEX policy_run ON policy_events(run_id);
+
+      INSERT INTO consumption_events(
+        at, run_id, job_id, attempt, selector, input_tokens, cached_input_tokens,
+        output_tokens, total_tokens, duration_ms, registry_digest, pricing_status,
+        match_tier, equivalent_low_usd, equivalent_high_usd, currency
+      )
+      SELECT
+        COALESCE(ja.completed_at, j.updated_at),
+        json_extract(j.payload, '$.runId'),
+        j.id,
+        ja.attempt,
+        COALESCE(ja.selector, json_extract(j.payload, '$.request.selector')),
+        COALESCE(json_extract(ja.usage_json, '$.input_tokens'), 0),
+        COALESCE(json_extract(ja.usage_json, '$.input_tokens_details.cached_tokens'), 0),
+        COALESCE(json_extract(ja.usage_json, '$.output_tokens'), 0),
+        COALESCE(json_extract(ja.usage_json, '$.total_tokens'), 0),
+        CASE WHEN ja.started_at IS NOT NULL AND ja.completed_at IS NOT NULL
+          THEN CAST((julianday(ja.completed_at) - julianday(ja.started_at)) * 86400000 AS INTEGER)
+          ELSE NULL END,
+        NULL,
+        'unknown',
+        'legacy',
+        NULL,
+        NULL,
+        'USD'
+      FROM job_attempts ja
+      JOIN jobs j ON j.id = ja.job_id
+      WHERE ja.usage_json IS NOT NULL;
+    `
   }];
+  const pending = migrations.filter((migration) => !applied.has(migration.version));
+  if (applied.size && pending.length && existsSync(DATABASE_PATH)) {
+    const currentVersion = Math.max(...applied);
+    const backup = `${DATABASE_PATH}.bak-v${currentVersion}`;
+    if (!existsSync(backup)) {
+      db.pragma("wal_checkpoint(FULL)");
+      copyFileSync(DATABASE_PATH, backup);
+      restrict(backup, 0o600);
+    }
+  }
   for (const migration of migrations) {
     if (applied.has(migration.version)) continue;
     db.transaction(() => {

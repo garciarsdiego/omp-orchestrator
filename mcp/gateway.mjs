@@ -124,11 +124,14 @@ export function gatewayToken() {
   return token;
 }
 
-export function requestInference({ model, prompt, reasoning, maxOutputTokens, cacheKey, timeoutMs = 720_000 }) {
+export function requestInference({
+  model, prompt, reasoning, maxOutputTokens, cacheKey, timeoutMs = 720_000, shouldCancel
+}) {
   if (!cacheKey) throw new Error("A unique prompt cache key is required for session isolation.");
   const body = buildInferenceBody({ model, prompt, reasoning, maxOutputTokens, cacheKey });
   const serialized = JSON.stringify(body);
   return new Promise((resolve, reject) => {
+    let cancellationTimer;
     const request = http.request("http://127.0.0.1:4000/v1/responses", {
       method: "POST",
       headers: {
@@ -149,6 +152,22 @@ export function requestInference({ model, prompt, reasoning, maxOutputTokens, ca
         catch { reject(new Error("Gateway returned invalid JSON.")); }
       });
     });
+    const clearCancellationTimer = () => {
+      if (cancellationTimer) clearInterval(cancellationTimer);
+    };
+    request.once("close", clearCancellationTimer);
+    if (shouldCancel) {
+      cancellationTimer = setInterval(() => {
+        try {
+          if (shouldCancel()) {
+            const error = new Error("Inference cancelled by operator.");
+            error.name = "CancellationError";
+            request.destroy(error);
+          }
+        } catch {}
+      }, 250);
+      cancellationTimer.unref?.();
+    }
     request.setTimeout(timeoutMs, () => request.destroy(new Error(`Inference timed out after ${timeoutMs}ms.`)));
     request.on("error", reject);
     request.end(serialized);

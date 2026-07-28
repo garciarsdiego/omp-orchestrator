@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "revision": "2026-07-28",
+  "currency": "USD",
+  "staleAfterDays": 90,
+  "entries": [
+    {
+      "match": "exact",
+      "selector": "anthropic/claude-fable-5",
+      "billingMode": "subscription_or_api",
+      "confidence": "exact",
+      "effectiveDate": "2026-07-28",
+      "source": "operator-reviewed",
+      "rates": { "input": 10, "cachedInput": 1, "output": 50 }
+    },
+    {
+      "match": "exact",
+      "selector": "google-antigravity/gemini-3.5-flash",
+      "billingMode": "subscription_or_api",
+      "confidence": "exact",
+      "effectiveDate": "2026-07-28",
+      "source": "operator-reviewed",
+      "rates": { "input": 1.5, "cachedInput": 0.15, "output": 9 }
+    },
+    {
+      "match": "exact",
+      "selector": "openai-codex/gpt-5.5",
+      "billingMode": "subscription_or_credits",
+      "confidence": "exact",
+      "effectiveDate": "2026-07-28",
+      "source": "operator-reviewed",
+      "rates": { "input": 5, "cachedInput": 0.5, "output": 30 }
+    },
+    {
+      "match": "exact",
+      "selector": "xai-oauth/grok-4.5",
+      "billingMode": "subscription_or_api",
+      "confidence": "exact",
+      "effectiveDate": "2026-07-28",
+      "source": "operator-reviewed",
+      "rates": { "input": 2, "cachedInput": 0.2, "output": 6 }
+    },
+    {
+      "match": "range",
+      "selectors": ["xai-oauth/grok-composer-2.5-fast"],
+      "billingMode": "subscription_no_public_api_price",
+      "confidence": "approximate",
+      "effectiveDate": "2026-07-28",
+      "source": "operator-range",
+      "lowRates": { "input": 1, "cachedInput": 0.2, "output": 2 },
+      "highRates": { "input": 2, "cachedInput": 0.2, "output": 6 }
+    }
+  ]
+}

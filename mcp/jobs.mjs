@@ -1,11 +1,14 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getModels, getRoles } from "./lib.mjs";
 import { parseRoleSelector } from "./gateway.mjs";
-import { listJobs, newJobId, publicJob, readJob, updateJob, writeJob } from "./job-store.mjs";
+import {
+  getJobAttempts, listJobs, newJobId, publicJob, readJob, updateJob, writeJob
+} from "./job-store.mjs";
 import { runtimeStatus } from "./runtime.mjs";
 import { assertNoSecrets } from "./security.mjs";
+import { assertJobEstimate, estimateJobRequest } from "./budget.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKER = path.join(HERE, "job-worker.mjs");
@@ -48,8 +51,10 @@ export async function createJob({
   contract = "text",
   maxOutputTokens = 4096,
   timeoutMs = 720_000,
+  budget,
   confirmQuota = false,
-  jobRoot
+  jobRoot,
+  runId
 } = {}) {
   if (!confirmQuota) throw new Error("Inference requires confirmQuota=true because it can consume provider quota.");
   if ((!role && !requestedSelector) || (role && requestedSelector)) {
@@ -72,11 +77,16 @@ export async function createJob({
     ? getModels({ provider: parseRoleSelector(requestedSelector).provider, limit: Number.POSITIVE_INFINITY }).models
     : [];
   const { selector, parsed } = resolveJobTarget({ role, requestedSelector, roles, models });
+  const estimate = estimateJobRequest({ selector, prompt, maxOutputTokens, timeoutMs, budget });
+  assertJobEstimate(estimate);
+  maxOutputTokens = Math.min(maxOutputTokens, estimate.budget.maxOutputTokens);
+  timeoutMs = Math.min(timeoutMs, estimate.budget.maxDurationMs);
   const runtime = await runtimeStatus();
   if (!runtime.running) throw new Error("OMP runtime is not running. Start it before creating an inference job.");
   const now = new Date().toISOString();
   const job = {
     id: newJobId(),
+    runId: runId || null,
     status: "queued",
     attempt: 1,
     createdAt: now,
@@ -90,6 +100,9 @@ export async function createJob({
       maxOutputTokens,
       timeoutMs
     },
+    budget: estimate.budget,
+    estimate,
+    deadlineAt: new Date(Date.now() + estimate.budget.maxDurationMs).toISOString(),
     workerPid: null,
     output: null,
     validation: null,
@@ -125,6 +138,35 @@ export async function retryJob({ id, confirmQuota = false, jobRoot } = {}) {
   if (!new Set(["failed", "invalid", "interrupted"]).has(job.status)) {
     throw new Error(`Only failed, invalid, or interrupted jobs can be retried; current status is ${job.status}.`);
   }
+  const attempts = getJobAttempts(id);
+  const budget = job.budget || estimateJobRequest({
+    selector: job.request.selector,
+    prompt: job.request.prompt,
+    maxOutputTokens: job.request.maxOutputTokens,
+    timeoutMs: job.request.timeoutMs
+  }).budget;
+  if (job.attempt > budget.maxRetries || attempts.length >= budget.maxCalls) {
+    throw new Error("Retry exceeds maxRetries or maxCalls.");
+  }
+  const prior = attempts.reduce((totals, attempt) => ({
+    inputTokens: totals.inputTokens + (attempt.usage?.input_tokens || 0),
+    outputTokens: totals.outputTokens + (attempt.usage?.output_tokens || 0),
+    totalTokens: totals.totalTokens + (attempt.usage?.total_tokens || 0)
+  }), { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
+  const nextEstimate = estimateJobRequest({
+    selector: job.request.selector,
+    prompt: job.request.prompt,
+    maxOutputTokens: job.request.maxOutputTokens,
+    timeoutMs: job.request.timeoutMs,
+    budget: {
+      ...budget,
+      maxInputTokens: budget.maxInputTokens - prior.inputTokens,
+      maxOutputTokens: budget.maxOutputTokens - prior.outputTokens,
+      maxTotalTokens: budget.maxTotalTokens - prior.totalTokens,
+      maxCalls: budget.maxCalls - attempts.length
+    }
+  });
+  assertJobEstimate(nextEstimate);
   const updated = updateJob(id, (current) => ({
     ...current,
     status: "queued",
@@ -135,9 +177,76 @@ export async function retryJob({ id, confirmQuota = false, jobRoot } = {}) {
     output: null,
     validation: null,
     usage: null,
-    error: null
+    error: null,
+    request: {
+      ...current.request,
+      maxOutputTokens: Math.min(current.request.maxOutputTokens, nextEstimate.budget.maxOutputTokens),
+      timeoutMs: Math.min(current.request.timeoutMs, nextEstimate.budget.maxDurationMs)
+    },
+    deadlineAt: new Date(Date.now() + current.budget.maxDurationMs).toISOString()
   }), jobRoot);
   updated.workerPid = spawnWorker(id, jobRoot);
   writeJob(updated, jobRoot);
   return publicJob(updated);
+}
+
+function stopProcessTree(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+  } else {
+    try { process.kill(-pid, "SIGTERM"); } catch { return false; }
+  }
+  return true;
+}
+
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+export async function cancelJob({ id, confirm = false, graceMs = 1_000, jobRoot } = {}) {
+  if (!confirm) throw new Error("Cancellation requires confirm=true.");
+  const job = readJob(id, jobRoot);
+  if (!["queued", "running", "cancellation_requested"].includes(job.status)) {
+    throw new Error(`Job cannot be cancelled from ${job.status}.`);
+  }
+  const requestedAt = new Date().toISOString();
+  updateJob(id, (current) => ({
+    ...current,
+    status: "cancellation_requested",
+    cancellationRequestedAt: requestedAt
+  }), jobRoot);
+  const deadline = Date.now() + Math.max(0, Math.min(5_000, Number(graceMs) || 1_000));
+  while (pidAlive(job.workerPid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const terminated = pidAlive(job.workerPid) ? stopProcessTree(job.workerPid) : false;
+  const cancelled = updateJob(id, (current) => ({
+    ...current,
+    status: "cancelled",
+    completedAt: new Date().toISOString(),
+    workerPid: null,
+    cancellation: { requestedAt, terminated }
+  }), jobRoot);
+  return publicJob(cancelled);
+}
+
+export function estimateJob({
+  role,
+  selector: requestedSelector,
+  prompt,
+  maxOutputTokens = 4096,
+  timeoutMs = 720_000,
+  budget
+} = {}) {
+  if ((!role && !requestedSelector) || (role && requestedSelector)) {
+    throw new Error("Provide exactly one target: role or selector.");
+  }
+  const roles = getRoles();
+  const models = requestedSelector
+    ? getModels({ provider: parseRoleSelector(requestedSelector).provider, limit: Number.POSITIVE_INFINITY }).models
+    : [];
+  const { selector } = resolveJobTarget({ role, requestedSelector, roles, models });
+  return estimateJobRequest({ selector, prompt, maxOutputTokens, timeoutMs, budget });
 }

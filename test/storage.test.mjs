@@ -10,6 +10,7 @@ process.env.OMP_ORCHESTRATOR_STATE_DIR = root;
 
 const storage = await import("../mcp/storage.mjs");
 const jobs = await import(`../mcp/job-store.mjs?test=${Date.now()}`);
+const jobManager = await import(`../mcp/jobs.mjs?test=${Date.now()}`);
 const runs = await import(`../mcp/run-store.mjs?test=${Date.now()}`);
 const recovery = await import(`../mcp/recovery.mjs?test=${Date.now()}`);
 const migration = await import(`../mcp/migration.mjs?test=${Date.now()}`);
@@ -67,8 +68,48 @@ function sampleRun(id = runs.newRunId()) {
 test("storage initializes a versioned SQLite WAL database", () => {
   const status = storage.storageStatus();
   assert.equal(status.journalMode, "wal");
-  assert.equal(status.schemaVersion, 1);
+  assert.equal(status.schemaVersion, 2);
   assert.match(status.databasePath, /orchestrator\.sqlite$/);
+  const tables = storage.getDatabase().prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table'"
+  ).all().map((row) => row.name);
+  assert.ok(tables.includes("consumption_events"));
+  assert.ok(tables.includes("policy_events"));
+  assert.ok(tables.includes("pricing_snapshots"));
+});
+
+test("consumption events are idempotent per job attempt", () => {
+  const job = sampleJob();
+  job.status = "succeeded";
+  job.workerPid = null;
+  job.completedAt = new Date().toISOString();
+  job.usage = { input_tokens: 10, output_tokens: 20, total_tokens: 30 };
+  jobs.writeJob(job);
+  const cost = {
+    lowUsd: 0.01,
+    highUsd: 0.01,
+    pricing: {
+      registryDigest: "abc",
+      registryRevision: "test",
+      status: "known",
+      matchTier: "exact",
+      currency: "USD"
+    }
+  };
+  jobs.recordConsumptionEvent(job, cost);
+  jobs.recordConsumptionEvent(job, cost);
+  assert.equal(storage.getDatabase().prepare(
+    "SELECT COUNT(*) AS count FROM consumption_events WHERE job_id = ?"
+  ).get(job.id).count, 1);
+});
+
+test("job cancellation requires confirmation and records a terminal state", async () => {
+  const job = sampleJob();
+  job.status = "queued";
+  job.workerPid = null;
+  jobs.writeJob(job);
+  await assert.rejects(() => jobManager.cancelJob({ id: job.id, confirm: false }), /confirm=true/);
+  assert.equal((await jobManager.cancelJob({ id: job.id, confirm: true, graceMs: 0 })).status, "cancelled");
 });
 
 test("jobs and attempts survive updates and startup reconciliation", () => {

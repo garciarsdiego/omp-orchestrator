@@ -140,6 +140,15 @@ Critérios de aceite:
 
 Prazo estimado: 3–4 dias; pode ocorrer em paralelo com a Fase 1.
 
+Status em 2026-07-28: implementação 0.7.0 concluída. Registry versionado,
+precedência e cobertura de preços, políticas de jobs, retries com saldo
+remanescente, cancelamento cooperativo com fallback, ledger SQLite v2 e
+contratos MCP foram implementados. A migração v1→v2 criou backup automático e
+importou cinco usages históricos como `legacy/unknown`. A cobertura inicial das
+nove roles é 2 conhecidas, 7 desconhecidas e nenhuma entrada vencida. Os 46
+testes, smoke com 352 modelos, estimativa real sem quota e empacotamento 0.7.0
+foram aprovados.
+
 ### 2.1 Registry de preços versionado
 
 Substituir a tabela embutida por dados versionados contendo:
@@ -389,3 +398,14 @@ persistência sem misturar trabalho estrutural com o release atual.
 Total: 7.247 tokens. Os dois outputs passaram na validação estrutural. A saída
 do advisor atingiu o teto de 3.500 tokens e foi tratada como contribuição
 parcial, não como plano completo.
+
+### Consulta da Fase 2
+
+| Papel | Job | Selector | Status | Tokens | Contrato |
+|---|---|---|---|---:|---|
+| plan | `46fb0b60-f9f5-4ef9-b5bf-997150d7bf92` | `anthropic/claude-fable-5:high` | succeeded | 3.793 | notes |
+| task | `cabcd0a1-ecd0-4675-8c20-fb7962f685a2` | `xai-oauth/grok-4.5` | succeeded | 3.395 | notes |
+
+Total da Fase 2: 7.188 tokens. Os dois contratos passaram. Grok registrou 3.077
+tokens de saída para um máximo solicitado de 3.000, incluindo 77 tokens de
+raciocínio; esse caso foi convertido em regressão para avaliação pós-chamada.

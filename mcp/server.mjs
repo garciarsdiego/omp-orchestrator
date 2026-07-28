@@ -1,6 +1,6 @@
 import readline from "node:readline";
 import { doctor, getModels, getRoles, getStatus } from "./lib.mjs";
-import { createJob, getJob, getJobResult, getJobs, retryJob } from "./jobs.mjs";
+import { cancelJob, createJob, estimateJob, getJob, getJobResult, getJobs, retryJob } from "./jobs.mjs";
 import {
   attestRun, cancelRun, createRun, estimateRun, getPipelineTemplates, getRoutingPolicy,
   getRun, getRunEvents, getRunResult, getRuns, resumeRun
@@ -9,6 +9,7 @@ import { runtimeStatus, startRuntime, stopRuntime } from "./runtime.mjs";
 import { getProviderReadiness } from "./providers.mjs";
 import { reconcileInterruptedWork } from "./recovery.mjs";
 import { storageStatus } from "./storage.mjs";
+import { loadPricingRegistry, pricingCoverage } from "./pricing.mjs";
 
 const startupRecovery = reconcileInterruptedWork();
 
@@ -52,6 +53,11 @@ const tools = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false }
   },
   {
+    name: "omp_pricing_coverage",
+    description: "Report versioned pricing coverage, provenance, confidence, and staleness for active OMP roles.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  },
+  {
     name: "omp_runtime_status",
     description: "Inspect the managed local broker and authenticated gateway without returning bearer tokens.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false }
@@ -85,12 +91,40 @@ const tools = [
         role: { type: "string", description: "Configured OMP role. Mutually exclusive with selector." },
         selector: { type: "string", description: "Exact available provider/model selector. Mutually exclusive with role." },
         prompt: { type: "string", description: "Complete bounded prompt for the delegated model." },
-        contract: { type: "string", enum: ["text", "json", "html"], default: "text" },
+        contract: { type: "string", enum: ["text", "notes", "json", "html", "standalone_html", "review_json"], default: "text" },
         maxOutputTokens: { type: "integer", minimum: 1, maximum: 64000, default: 4096 },
         timeoutMs: { type: "integer", minimum: 10000, maximum: 1800000, default: 720000 },
+        budget: { type: "object", additionalProperties: false, properties: {
+          maxCalls: { type: "integer", minimum: 1 },
+          maxInputTokens: { type: "integer", minimum: 1 },
+          maxOutputTokens: { type: "integer", minimum: 1 },
+          maxTotalTokens: { type: "integer", minimum: 1 },
+          maxDurationMs: { type: "integer", minimum: 10000 },
+          maxRetries: { type: "integer", minimum: 0 },
+          costPolicy: { type: "string", enum: ["observe", "enforce", "disabled"] },
+          maxApiEquivalentUsd: { type: "number", minimum: 0 }
+        } },
         confirmQuota: { type: "boolean", description: "Must be true to authorize provider quota consumption." }
       },
       required: ["prompt", "confirmQuota"],
+      oneOf: [{ required: ["role"] }, { required: ["selector"] }],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "omp_job_estimate",
+    description: "Estimate standalone job tokens and API-equivalent cost against a consumption policy without using provider quota.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        role: { type: "string" },
+        selector: { type: "string" },
+        prompt: { type: "string" },
+        maxOutputTokens: { type: "integer", minimum: 1, maximum: 64000, default: 4096 },
+        timeoutMs: { type: "integer", minimum: 10000, maximum: 1800000, default: 720000 },
+        budget: { type: "object" }
+      },
+      required: ["prompt"],
       oneOf: [{ required: ["role"] }, { required: ["selector"] }],
       additionalProperties: false
     }
@@ -137,6 +171,20 @@ const tools = [
         confirmQuota: { type: "boolean", description: "Must be true to authorize another provider call." }
       },
       required: ["id", "confirmQuota"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "omp_job_cancel",
+    description: "Request cancellation and stop the recorded worker process for a queued or running job.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        confirm: { type: "boolean" },
+        graceMs: { type: "integer", minimum: 0, maximum: 5000, default: 1000 }
+      },
+      required: ["id", "confirm"],
       additionalProperties: false
     }
   },
@@ -251,14 +299,32 @@ async function invoke(name, args = {}) {
   }
   if (name === "omp_providers") return getProviderReadiness();
   if (name === "omp_storage_status") return { ...storageStatus(), startupRecovery };
+  if (name === "omp_pricing_coverage") {
+    const registry = loadPricingRegistry();
+    const coverage = pricingCoverage(getRoles(), { registry });
+    return {
+      revision: registry.revision,
+      digest: registry.digest,
+      currency: registry.currency,
+      roles: coverage,
+      summary: {
+        total: coverage.length,
+        known: coverage.filter((item) => item.status !== "unknown").length,
+        unknown: coverage.filter((item) => item.status === "unknown").length,
+        stale: coverage.filter((item) => item.stale).length
+      }
+    };
+  }
   if (name === "omp_runtime_status") return runtimeStatus();
   if (name === "omp_runtime_start") return startRuntime(args);
   if (name === "omp_runtime_stop") return stopRuntime(args);
   if (name === "omp_job_create") return createJob(args);
+  if (name === "omp_job_estimate") return estimateJob(args);
   if (name === "omp_job_get") return getJob(args);
   if (name === "omp_job_list") return getJobs(args);
   if (name === "omp_job_result") return getJobResult(args);
   if (name === "omp_job_retry") return retryJob(args);
+  if (name === "omp_job_cancel") return cancelJob(args);
   if (name === "omp_pipeline_templates") return getPipelineTemplates();
   if (name === "omp_routing_policy") return getRoutingPolicy();
   if (name === "omp_run_estimate") return estimateRun(args);
@@ -297,7 +363,7 @@ rl.on("line", async (line) => {
       result(request.id, {
         protocolVersion: request.params?.protocolVersion || "2025-06-18",
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "omp-orchestrator", version: "0.6.0" }
+        serverInfo: { name: "omp-orchestrator", version: "0.7.0" }
       });
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
