@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readJob } from "./job-store.mjs";
 import { getRoles } from "./lib.mjs";
 import { parseRoleSelector } from "./gateway.mjs";
 import { estimateModelCost, sumCosts } from "./pricing.mjs";
@@ -57,12 +57,44 @@ export function estimateRun({ template = "single-file-web-app", input = "", budg
   const base = summarize(baseNodes);
   const contingency = summarize(contingencyNodes);
   const effectiveBudget = { ...definition.defaultBudget, ...(budget || {}) };
+  if (!["observe", "enforce", "disabled"].includes(effectiveBudget.costPolicy)) {
+    throw new Error("costPolicy must be observe, enforce, or disabled.");
+  }
   const warnings = [];
   for (const node of nodes) if (node.compatibility && !node.compatibility.allowed) warnings.push(`${node.id}: ${node.compatibility.reason}`);
-  for (const node of baseNodes) if (node.estimatedCost.highUsd === null) warnings.push(`${node.id}: pricing is unknown and cannot satisfy a hard USD budget.`);
+  if (effectiveBudget.costPolicy !== "disabled") {
+    for (const node of baseNodes) {
+      if (node.estimatedCost.highUsd === null) {
+        warnings.push(effectiveBudget.costPolicy === "enforce"
+          ? `${node.id}: pricing is unknown and cannot satisfy an enforced USD-equivalent budget.`
+          : `${node.id}: pricing is unknown; USD-equivalent reporting will be partial.`);
+      }
+    }
+  }
   if (base.tokens > effectiveBudget.maxTotalTokens) warnings.push("Base estimate exceeds maxTotalTokens.");
-  if (base.cost.highUsd !== null && base.cost.highUsd > effectiveBudget.maxApiEquivalentUsd) warnings.push("Base estimate exceeds maxApiEquivalentUsd.");
+  if (
+    effectiveBudget.costPolicy === "enforce"
+    && base.cost.highUsd !== null
+    && base.cost.highUsd > effectiveBudget.maxApiEquivalentUsd
+  ) warnings.push("Base estimate exceeds maxApiEquivalentUsd.");
   return { template: definition.id, nodes, base, contingency, budget: effectiveBudget, warnings };
+}
+
+export function assertEstimateBudget(estimate) {
+  if (estimate.base.tokens > estimate.budget.maxTotalTokens) {
+    throw new Error("Budget does not cover the base pipeline: Base estimate exceeds maxTotalTokens.");
+  }
+  if (estimate.base.calls > estimate.budget.maxCalls) {
+    throw new Error("Budget does not cover the base pipeline: Base estimate exceeds maxCalls.");
+  }
+  if (estimate.budget.costPolicy === "enforce") {
+    if (estimate.base.cost.highUsd === null) {
+      throw new Error("Base pipeline contains unknown pricing and cannot satisfy an enforced USD-equivalent budget.");
+    }
+    if (estimate.base.cost.highUsd > estimate.budget.maxApiEquivalentUsd) {
+      throw new Error("Budget does not cover the base pipeline: Base estimate exceeds maxApiEquivalentUsd.");
+    }
+  }
 }
 
 function spawnRunWorker(id, mode = "initial") {
@@ -96,10 +128,7 @@ export async function createRun({
   if (estimate.nodes.some((node) => node.compatibility && !node.compatibility.allowed)) {
     throw new Error("Routing policy blocks at least one required pipeline node.");
   }
-  if (estimate.base.cost.highUsd === null) throw new Error("Base pipeline contains unknown pricing and cannot satisfy a hard USD budget.");
-  if (estimate.warnings.some((warning) => warning.includes("exceeds"))) {
-    throw new Error(`Budget does not cover the base pipeline: ${estimate.warnings.join(" ")}`);
-  }
+  assertEstimateBudget(estimate);
   const runtime = await runtimeStatus();
   if (!runtime.running) throw new Error("OMP runtime is not running. Start it before creating a run.");
   const now = new Date().toISOString();
@@ -112,7 +141,15 @@ export async function createRun({
     input,
     budget: estimate.budget,
     estimate,
-    usage: { calls: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, totalTokens: 0, apiEquivalentLowUsd: 0, apiEquivalentHighUsd: 0 },
+    usage: {
+      calls: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      apiEquivalentLowUsd: estimate.budget.costPolicy === "disabled" ? null : 0,
+      apiEquivalentHighUsd: estimate.budget.costPolicy === "disabled" ? null : 0
+    },
     nodes: definition.nodes.map((node) => ({ id: node.id, type: node.type, status: "pending", role: node.role || null, jobId: null })),
     artifacts: [],
     validation: null,
@@ -139,7 +176,7 @@ export function getRunEvents({ id, after = 0, limit = 100 } = {}) { return readR
 export function getPipelineTemplates() { return listTemplates(); }
 export function getRoutingPolicy() {
   return {
-    version: "0.4.0",
+    version: "0.6.0",
     rules: [
       {
         selector: "xai-oauth/grok-composer-2.5-fast",
@@ -151,6 +188,22 @@ export function getRoutingPolicy() {
     ],
     default: "allowed"
   };
+}
+
+export function prepareNodesForResume(nodes = []) {
+  return nodes.map((node) => (
+    ["failed", "invalid", "interrupted"].includes(node.status)
+      ? {
+          ...node,
+          status: "pending",
+          jobId: null,
+          startedAt: null,
+          completedAt: null,
+          validation: null,
+          usage: null
+        }
+      : node
+  ));
 }
 
 export async function attestRun({ id, verdict, findings = [], confirmQuota = false } = {}) {
@@ -201,7 +254,9 @@ export async function attestRun({ id, verdict, findings = [], confirmQuota = fal
 
 export async function resumeRun({ id, budget, confirmBudget = false, confirmQuota = false } = {}) {
   const run = readRun(id);
-  if (!new Set(["failed", "budget_exceeded"]).has(run.status)) throw new Error(`Run cannot be resumed from ${run.status}.`);
+  if (!new Set(["failed", "budget_exceeded", "interrupted"]).has(run.status)) {
+    throw new Error(`Run cannot be resumed from ${run.status}.`);
+  }
   if (!confirmBudget || !confirmQuota) throw new Error("Resume requires confirmBudget=true and confirmQuota=true.");
   const runtime = await runtimeStatus();
   if (!runtime.running) throw new Error("OMP runtime is not running.");
@@ -210,6 +265,7 @@ export async function resumeRun({ id, budget, confirmBudget = false, confirmQuot
     const nextBudget = { ...current.budget, ...(budget || {}) };
     return {
       ...current, status: "running", budget: nextBudget, workerPid: null, error: null,
+      nodes: prepareNodesForResume(current.nodes),
       deadlineAt: new Date(Date.now() + nextBudget.maxDurationMs).toISOString(), completedAt: null
     };
   });
@@ -226,7 +282,7 @@ export function cancelRun({ id, confirm = false } = {}) {
   for (const node of run.nodes) {
     if (node.jobId) {
       try {
-        const job = JSON.parse(readFileSync(path.join(runJobsDir(id), `${node.jobId}.json`), "utf8"));
+        const job = readJob(node.jobId, runJobsDir(id));
         stopProcessTree(job.workerPid);
       } catch {}
     }

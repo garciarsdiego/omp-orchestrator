@@ -70,12 +70,20 @@ export function getModels({ provider, query, limit = 50 } = {}) {
 export function doctor() {
   const status = getStatus();
   const roles = getRoles();
-  const catalog = getModels({ limit: 1 });
+  const catalog = getModels({ limit: Number.POSITIVE_INFINITY });
+  const availableSelectors = new Set(catalog.models.map((model) => model.selector));
+  const unresolvedRoles = Object.entries(roles)
+    .filter(([, selector]) => {
+      const normalized = String(selector).replace(/:(?:off|minimal|low|medium|high|xhigh|max|ultra)$/i, "");
+      return !availableSelectors.has(normalized);
+    })
+    .map(([role, selector]) => ({ role, selector }));
   return {
-    ok: true,
+    ok: unresolvedRoles.length === 0,
     status,
     roleCount: Object.keys(roles).length,
     modelCount: catalog.totalAvailable,
+    unresolvedRoles,
     safety: {
       rawCredentialStoreRead: false,
       secretValuesReturned: false,

@@ -1,15 +1,19 @@
 {
   "name": "omp-orchestrator",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Codex plugin for safe orchestration over a local Oh My Pi installation",
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "migrate:json": "node scripts/migrate-json.mjs"
   },
   "engines": {
     "node": ">=20"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^12.4.1"
+  }
 }

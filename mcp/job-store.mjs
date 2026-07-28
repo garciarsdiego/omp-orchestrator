@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { getDatabase, STATE_ROOT } from "./storage.mjs";
 
 export const JOB_ROOT = process.env.OMP_ORCHESTRATOR_DATA_DIR
-  || path.join(os.tmpdir(), "omp-orchestrator", "jobs");
+  || path.join(STATE_ROOT, "jobs");
 
 function assertJobId(id) {
   if (!/^[0-9a-f-]{36}$/i.test(String(id))) throw new Error("Invalid job id.");
+}
+
+function scopeFor(root = JOB_ROOT) {
+  return path.resolve(root);
 }
 
 export function newJobId() {
@@ -16,24 +19,54 @@ export function newJobId() {
 
 export function jobPath(id, root = JOB_ROOT) {
   assertJobId(id);
-  return path.join(root, `${id}.json`);
+  return `sqlite:${scopeFor(root)}#job=${id}`;
 }
 
 export function readJob(id, root = JOB_ROOT) {
-  try {
-    return JSON.parse(readFileSync(jobPath(id, root), "utf8"));
-  } catch (error) {
-    if (error.code === "ENOENT") throw new Error(`Job not found: ${id}`);
-    throw error;
-  }
+  assertJobId(id);
+  const row = getDatabase().prepare("SELECT payload FROM jobs WHERE id = ? AND scope = ?").get(id, scopeFor(root));
+  if (!row) throw new Error(`Job not found: ${id}`);
+  return JSON.parse(row.payload);
 }
 
 export function writeJob(job, root = JOB_ROOT) {
-  mkdirSync(root, { recursive: true });
-  const target = jobPath(job.id, root);
-  const temporary = `${target}.${process.pid}.tmp`;
-  writeFileSync(temporary, JSON.stringify(job, null, 2), { encoding: "utf8", mode: 0o600 });
-  renameSync(temporary, target);
+  assertJobId(job.id);
+  const db = getDatabase();
+  const payload = JSON.stringify(job);
+  db.transaction(() => {
+    db.prepare(`
+      INSERT INTO jobs(id, scope, status, attempt, created_at, updated_at, worker_pid, payload)
+      VALUES (@id, @scope, @status, @attempt, @createdAt, @updatedAt, @workerPid, @payload)
+      ON CONFLICT(id) DO UPDATE SET
+        scope=excluded.scope, status=excluded.status, attempt=excluded.attempt,
+        updated_at=excluded.updated_at, worker_pid=excluded.worker_pid, payload=excluded.payload
+    `).run({
+      id: job.id,
+      scope: scopeFor(root),
+      status: job.status,
+      attempt: job.attempt,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+      workerPid: job.workerPid || null,
+      payload
+    });
+    db.prepare(`
+      INSERT INTO job_attempts(job_id, attempt, status, selector, started_at, completed_at, usage_json, error_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(job_id, attempt) DO UPDATE SET
+        status=excluded.status, selector=excluded.selector, started_at=excluded.started_at,
+        completed_at=excluded.completed_at, usage_json=excluded.usage_json, error_json=excluded.error_json
+    `).run(
+      job.id,
+      job.attempt,
+      job.status,
+      job.request?.selector || null,
+      job.startedAt || null,
+      job.completedAt || null,
+      job.usage ? JSON.stringify(job.usage) : null,
+      job.error ? JSON.stringify(job.error) : null
+    );
+  })();
   return job;
 }
 
@@ -45,16 +78,9 @@ export function updateJob(id, mutate, root = JOB_ROOT) {
 }
 
 export function listJobs(limit = 25, root = JOB_ROOT) {
-  mkdirSync(root, { recursive: true });
-  return readdirSync(root)
-    .filter((name) => /^[0-9a-f-]{36}\.json$/i.test(name))
-    .map((name) => {
-      try { return JSON.parse(readFileSync(path.join(root, name), "utf8")); }
-      catch { return null; }
-    })
-    .filter(Boolean)
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-    .slice(0, Math.max(1, Math.min(100, limit)));
+  return getDatabase().prepare(`
+    SELECT payload FROM jobs WHERE scope = ? ORDER BY created_at DESC LIMIT ?
+  `).all(scopeFor(root), Math.max(1, Math.min(100, limit))).map((row) => JSON.parse(row.payload));
 }
 
 export function publicJob(job, { includeOutput = false } = {}) {

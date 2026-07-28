@@ -9,8 +9,12 @@ process.env.OMP_ORCHESTRATOR_RUN_DIR = root;
 
 const store = await import(`../mcp/run-store.mjs?test=${Date.now()}`);
 const manager = await import(`../mcp/run-manager.mjs?test=${Date.now()}`);
+const storage = await import("../mcp/storage.mjs");
 
-test.after(() => rmSync(root, { recursive: true, force: true }));
+test.after(() => {
+  storage.closeDatabase();
+  rmSync(root, { recursive: true, force: true });
+});
 
 test("run store isolates artifacts and sequences events", () => {
   const id = store.newRunId();
@@ -60,6 +64,64 @@ test("run creation previews without writes and rejects an insufficient budget", 
     }),
     /Budget does not cover/
   );
+});
+
+test("subscription cost policy observes unknown pricing without blocking token governance", () => {
+  const roles = {
+    plan: "anthropic/claude-fable-5:high",
+    advisor: "anthropic/claude-opus-5:high"
+  };
+  const observed = manager.estimateRun({
+    template: "independent-analysis",
+    input: "Design durable storage",
+    budget: { costPolicy: "observe", maxCalls: 2, maxTotalTokens: 16000 },
+    rolesOverride: roles
+  });
+  assert.equal(observed.base.cost.highUsd, null);
+  assert.match(observed.warnings.join(" "), /reporting will be partial/);
+  assert.doesNotThrow(() => manager.assertEstimateBudget(observed));
+
+  const enforced = manager.estimateRun({
+    template: "independent-analysis",
+    input: "Design durable storage",
+    budget: { costPolicy: "enforce", maxCalls: 2, maxTotalTokens: 16000, maxApiEquivalentUsd: 0.5 },
+    rolesOverride: roles
+  });
+  assert.throws(
+    () => manager.assertEstimateBudget(enforced),
+    /unknown pricing/
+  );
+});
+
+test("disabled cost policy retains hard call and token limits", () => {
+  const roles = {
+    plan: "anthropic/claude-fable-5:high",
+    advisor: "anthropic/claude-opus-5:high"
+  };
+  const estimate = manager.estimateRun({
+    template: "independent-analysis",
+    input: "Design durable storage",
+    budget: { costPolicy: "disabled", maxCalls: 1, maxTotalTokens: 16000 },
+    rolesOverride: roles
+  });
+  assert.doesNotMatch(estimate.warnings.join(" "), /pricing/);
+  assert.throws(() => manager.assertEstimateBudget(estimate), /maxCalls/);
+});
+
+test("resume preserves completed checkpoints and resets only retryable nodes", () => {
+  const nodes = [
+    { id: "complete", status: "succeeded", jobId: "kept" },
+    { id: "failed", status: "failed", jobId: "replaced", usage: { total_tokens: 10 } },
+    { id: "interrupted", status: "interrupted", jobId: "orphaned" }
+  ];
+  const prepared = manager.prepareNodesForResume(nodes);
+  assert.equal(prepared[0].jobId, "kept");
+  assert.equal(prepared[0].status, "succeeded");
+  assert.equal(prepared[1].jobId, null);
+  assert.equal(prepared[1].status, "pending");
+  assert.equal(prepared[1].usage, null);
+  assert.equal(prepared[2].jobId, null);
+  assert.equal(prepared[2].status, "pending");
 });
 
 test("cancellation requires explicit confirmation before reading run state", () => {
