@@ -9,9 +9,13 @@ runtime while Codex remains the root orchestrator and final reviewer.
 - Detect the installed OMP executable and active configuration directory.
 - Read OMP model roles through the public CLI.
 - Search the model catalog without reading credential databases.
+- Report readiness for the approved Claude, Codex, Cursor, Grok, Qwen, Kimi,
+  Devin, Gemini, DeepSeek, and Cerebras provider set.
 - Give Codex workflows for planning, delegation, review, and setup.
 - Manage an authenticated loopback broker/gateway runtime with explicit confirmation.
 - Run asynchronous, persistent inference jobs through configured OMP roles.
+- Run explicitly approved jobs through an exact available provider/model selector
+  when the provider is not assigned to one of OMP's finite role slots.
 - Validate `text`, `json`, and standalone `html` output contracts before review.
 - Execute isolated, budgeted DAG runs with checkpoints and Codex attestation.
 - Never return API keys, OAuth tokens, or raw contents of `agent.db`.
@@ -57,7 +61,34 @@ Use `omp_job_create`, poll with `omp_job_get`, and retrieve a completed body wit
 Every attempt receives a unique `prompt_cache_key` so gateway credential
 stickiness cannot accidentally reuse another job's conversational session.
 
-## Version 0.4 run workflow
+Use `omp_providers` to see which approved providers are currently selectable.
+An unavailable OAuth provider must be authenticated inside OMP itself; another
+CLI being logged in does not imply that OMP can reuse its credential. Jobs accept
+exactly one of `role` or `selector`, and an explicit selector must already be
+present in OMP's available catalog.
+
+## Version 0.5 provider and run workflow
+
+The approved provider set is:
+
+| Logical provider | OMP provider id(s) |
+|---|---|
+| Claude | `anthropic` |
+| Codex | `openai-codex` |
+| Cursor | `cursor` |
+| Grok | `xai-oauth`, `xai` |
+| Qwen | `qwen-portal`, `alibaba-coding-plan`, `alibaba-token-plan` |
+| Kimi | `kimi-code`, `moonshot` |
+| Devin | `devin` |
+| Gemini | `google-antigravity`, `google-gemini-cli`, `google` |
+| DeepSeek | `deepseek` |
+| Cerebras | `cerebras` |
+
+`omp_providers` reports actual readiness from OMP's available model catalog.
+This is stronger than merely finding another provider CLI on `PATH`: OMP must
+have its own resolvable credential before a provider is marked ready.
+The authenticated local snapshot used for the 0.5 baseline exposes 352 models;
+this is diagnostic evidence, not a fixed product contract.
 
 1. Preview with `omp_run_estimate`.
 2. Approve budget and quota with `omp_run_create`.

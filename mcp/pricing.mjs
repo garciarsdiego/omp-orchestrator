@@ -18,7 +18,7 @@ function dollars(tokens, rate) {
 }
 
 function normalizeSelector(selector) {
-  return String(selector).replace(/:(?:off|minimal|low|medium|high|xhigh)$/i, "");
+  return String(selector).replace(/:(?:off|minimal|low|medium|high|xhigh|max|ultra)$/i, "");
 }
 
 export function estimateModelCost(selector, { inputTokens = 0, outputTokens = 0, cachedInputTokens = 0 } = {}) {

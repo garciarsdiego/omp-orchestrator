@@ -13,6 +13,11 @@ test("role selectors preserve provider, model, and effort", () => {
     model: "swe-1-6-fast",
     reasoning: null
   });
+  assert.deepEqual(parseRoleSelector("kimi-code/k3:max"), {
+    provider: "kimi-code",
+    model: "k3",
+    reasoning: "max"
+  });
 });
 
 test("response text extraction supports Responses API content", () => {

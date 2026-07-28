@@ -6,6 +6,7 @@ import {
   getRun, getRunEvents, getRunResult, getRuns, resumeRun
 } from "./run-manager.mjs";
 import { runtimeStatus, startRuntime, stopRuntime } from "./runtime.mjs";
+import { getProviderReadiness } from "./providers.mjs";
 
 const tools = [
   {
@@ -35,6 +36,11 @@ const tools = [
       },
       additionalProperties: false
     }
+  },
+  {
+    name: "omp_providers",
+    description: "Report readiness for the approved Claude, Codex, Cursor, Grok, Qwen, Kimi, Devin, Gemini, DeepSeek, and Cerebras provider set without returning credentials.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
   },
   {
     name: "omp_runtime_status",
@@ -67,14 +73,16 @@ const tools = [
     inputSchema: {
       type: "object",
       properties: {
-        role: { type: "string", description: "Configured OMP role, such as plan, task, designer, or advisor." },
+        role: { type: "string", description: "Configured OMP role. Mutually exclusive with selector." },
+        selector: { type: "string", description: "Exact available provider/model selector. Mutually exclusive with role." },
         prompt: { type: "string", description: "Complete bounded prompt for the delegated model." },
         contract: { type: "string", enum: ["text", "json", "html"], default: "text" },
         maxOutputTokens: { type: "integer", minimum: 1, maximum: 64000, default: 4096 },
         timeoutMs: { type: "integer", minimum: 10000, maximum: 1800000, default: 720000 },
         confirmQuota: { type: "boolean", description: "Must be true to authorize provider quota consumption." }
       },
-      required: ["role", "prompt", "confirmQuota"],
+      required: ["prompt", "confirmQuota"],
+      oneOf: [{ required: ["role"] }, { required: ["selector"] }],
       additionalProperties: false
     }
   },
@@ -230,6 +238,7 @@ async function invoke(name, args = {}) {
       limit: Math.max(1, Math.min(200, Number(args.limit) || 50))
     });
   }
+  if (name === "omp_providers") return getProviderReadiness();
   if (name === "omp_runtime_status") return runtimeStatus();
   if (name === "omp_runtime_start") return startRuntime(args);
   if (name === "omp_runtime_stop") return stopRuntime(args);
@@ -276,7 +285,7 @@ rl.on("line", async (line) => {
       result(request.id, {
         protocolVersion: request.params?.protocolVersion || "2025-06-18",
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "omp-orchestrator", version: "0.4.0" }
+        serverInfo: { name: "omp-orchestrator", version: "0.5.0" }
       });
     } else if (request.method === "tools/list") {
       result(request.id, { tools });

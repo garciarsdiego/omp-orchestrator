@@ -139,7 +139,7 @@ export function getRunEvents({ id, after = 0, limit = 100 } = {}) { return readR
 export function getPipelineTemplates() { return listTemplates(); }
 export function getRoutingPolicy() {
   return {
-    version: "0.4.0",
+    version: "0.5.0",
     rules: [
       {
         selector: "xai-oauth/grok-composer-2.5-fast",

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import http from "node:http";
 import { ompExecutable } from "./lib.mjs";
 
-const EFFORTS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+const EFFORTS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 
 export function parseRoleSelector(selector) {
   const slash = String(selector).indexOf("/");
