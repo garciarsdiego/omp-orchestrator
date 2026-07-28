@@ -48,18 +48,29 @@ function assertBudget(run, selector, prompt, maxOutputTokens) {
     error.name = "BudgetExceededError";
     throw error;
   }
-  const projected = estimateModelCost(selector, { inputTokens: expectedInput, outputTokens: maxOutputTokens });
-  if (projected.highUsd === null || run.usage.apiEquivalentHighUsd + projected.highUsd > run.budget.maxApiEquivalentUsd) {
-    const error = new Error("Projected job exceeds or cannot satisfy the run USD-equivalent budget.");
-    error.name = "BudgetExceededError";
-    throw error;
+  if (run.budget.costPolicy === "enforce") {
+    const projected = estimateModelCost(selector, { inputTokens: expectedInput, outputTokens: maxOutputTokens });
+    if (projected.highUsd === null || run.usage.apiEquivalentHighUsd + projected.highUsd > run.budget.maxApiEquivalentUsd) {
+      const error = new Error("Projected job exceeds or cannot satisfy the enforced USD-equivalent budget.");
+      error.name = "BudgetExceededError";
+      throw error;
+    }
   }
 }
 
 function refreshUsage() {
   const run = readRun(id);
   const seen = new Set();
-  const totals = { calls: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, totalTokens: 0, apiEquivalentLowUsd: 0, apiEquivalentHighUsd: 0 };
+  const costDisabled = run.budget.costPolicy === "disabled";
+  const totals = {
+    calls: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    apiEquivalentLowUsd: costDisabled ? null : 0,
+    apiEquivalentHighUsd: costDisabled ? null : 0
+  };
   for (const node of run.nodes) {
     if (!node.jobId || seen.has(node.jobId)) continue;
     seen.add(node.jobId);
@@ -71,9 +82,11 @@ function refreshUsage() {
     totals.cachedInputTokens += result.usage.input_tokens_details?.cached_tokens || 0;
     totals.outputTokens += result.usage.output_tokens || 0;
     totals.totalTokens += result.usage.total_tokens || 0;
-    const cost = actualUsageCost(result.selector, result.usage);
-    totals.apiEquivalentLowUsd += cost.lowUsd || 0;
-    totals.apiEquivalentHighUsd = totals.apiEquivalentHighUsd === null || cost.highUsd === null ? null : totals.apiEquivalentHighUsd + cost.highUsd;
+    if (!costDisabled) {
+      const cost = actualUsageCost(result.selector, result.usage);
+      totals.apiEquivalentLowUsd += cost.lowUsd || 0;
+      totals.apiEquivalentHighUsd = totals.apiEquivalentHighUsd === null || cost.highUsd === null ? null : totals.apiEquivalentHighUsd + cost.highUsd;
+    }
   }
   updateRun(id, (current) => ({ ...current, usage: totals }));
   return totals;
@@ -153,7 +166,7 @@ async function initialPipeline() {
   const planStarted = await startNode("plan", planDef.role, planDef.contract, planPrompt, planDef.maxOutputTokens);
   const designStarted = await startNode("design", designDef.role, designDef.contract, designPrompt, designDef.maxOutputTokens);
   // Provider jobs run concurrently; persist terminal states sequentially so
-  // atomic run.json updates cannot overwrite one another.
+  // complete run payload updates cannot overwrite one another.
   const planResult = await finishNode("plan", planStarted);
   const designResult = await finishNode("design", designStarted);
   let plan;

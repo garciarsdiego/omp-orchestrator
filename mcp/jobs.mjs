@@ -5,6 +5,7 @@ import { getModels, getRoles } from "./lib.mjs";
 import { parseRoleSelector } from "./gateway.mjs";
 import { listJobs, newJobId, publicJob, readJob, updateJob, writeJob } from "./job-store.mjs";
 import { runtimeStatus } from "./runtime.mjs";
+import { assertNoSecrets } from "./security.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKER = path.join(HERE, "job-worker.mjs");
@@ -58,6 +59,7 @@ export async function createJob({
   if (requestedSelector && typeof requestedSelector !== "string") throw new Error("Selector must be a string.");
   if (!prompt || typeof prompt !== "string") throw new Error("A non-empty prompt is required.");
   if (Buffer.byteLength(prompt) > 512_000) throw new Error("Prompt exceeds the 512 KB MVP limit.");
+  assertNoSecrets(prompt, "Job prompt");
   if (!new Set(["text", "notes", "json", "html", "standalone_html", "review_json"]).has(contract)) {
     throw new Error("Unsupported output contract.");
   }
@@ -120,8 +122,8 @@ export async function retryJob({ id, confirmQuota = false, jobRoot } = {}) {
   const runtime = await runtimeStatus();
   if (!runtime.running) throw new Error("OMP runtime is not running. Start it before retrying a job.");
   const job = readJob(id, jobRoot);
-  if (!new Set(["failed", "invalid"]).has(job.status)) {
-    throw new Error(`Only failed or invalid jobs can be retried; current status is ${job.status}.`);
+  if (!new Set(["failed", "invalid", "interrupted"]).has(job.status)) {
+    throw new Error(`Only failed, invalid, or interrupted jobs can be retried; current status is ${job.status}.`);
   }
   const updated = updateJob(id, (current) => ({
     ...current,

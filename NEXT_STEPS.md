@@ -32,6 +32,8 @@ código-fonte completo nem credenciais.
 5. Persistir estado fora do diretório temporário antes de expandir pipelines.
 6. Templates permanecem declarativos: nenhum `eval`, script ou hook arbitrário.
 7. Benchmarks serão pequenos, específicos por papel e limitados por orçamento.
+8. Para providers por assinatura, custo equivalente de API é telemetria em modo
+   `observe`; chamadas, tokens e duração permanecem limites rígidos.
 
 ## Fase 0 — estabilizar e publicar a baseline
 
@@ -82,6 +84,12 @@ Critérios de aceite:
 ## Fase 1 — persistência e recuperação
 
 Prazo estimado: 4–6 dias.
+
+Status em 2026-07-28: implementação 0.6.0 concluída; 37 testes automatizados de
+SQLite WAL, concorrência multiprocesso, reconciliação, checkpoints, migração,
+CAS, GC e padrões de segredo aprovados. O dry-run e a importação explícita de
+3 jobs, 2 runs e 12 eventos legados passaram sem erros; smoke confirmou OMP
+17.1.8, 9 roles e 352 modelos.
 
 ### 1.1 Substituir JSON em `%TEMP%` por SQLite
 
@@ -170,8 +178,17 @@ Adicionar:
 - `maxOutputTokens`;
 - `maxDurationMs`;
 - `maxApiEquivalentUsd`, quando calculável;
+- `costPolicy`: `observe`, `enforce` ou `disabled`;
 - cancelamento cooperativo;
 - razão explícita para `budget_exceeded`.
+
+Política inicial:
+
+- `observe` é o padrão para OAuth e assinaturas;
+- `enforce` é reservado para credenciais pay-as-you-go;
+- preço desconhecido não bloqueia `observe`, mas fica explícito na telemetria;
+- limites de chamadas, tokens e duração são calibrados por template e revistos
+  com os valores reais de cada execução.
 
 Critérios de aceite:
 

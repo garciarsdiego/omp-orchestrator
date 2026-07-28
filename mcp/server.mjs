@@ -7,6 +7,10 @@ import {
 } from "./run-manager.mjs";
 import { runtimeStatus, startRuntime, stopRuntime } from "./runtime.mjs";
 import { getProviderReadiness } from "./providers.mjs";
+import { reconcileInterruptedWork } from "./recovery.mjs";
+import { storageStatus } from "./storage.mjs";
+
+const startupRecovery = reconcileInterruptedWork();
 
 const tools = [
   {
@@ -40,6 +44,11 @@ const tools = [
   {
     name: "omp_providers",
     description: "Report readiness for the approved Claude, Codex, Cursor, Grok, Qwen, Kimi, Devin, Gemini, DeepSeek, and Cerebras provider set without returning credentials.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
+  },
+  {
+    name: "omp_storage_status",
+    description: "Report durable SQLite/WAL storage configuration and startup reconciliation counts without returning stored content.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false }
   },
   {
@@ -154,6 +163,7 @@ const tools = [
           properties: {
             maxCalls: { type: "integer", minimum: 1, maximum: 20 },
             maxTotalTokens: { type: "integer", minimum: 1000 },
+            costPolicy: { type: "string", enum: ["observe", "enforce", "disabled"], default: "observe" },
             maxApiEquivalentUsd: { type: "number", minimum: 0 },
             maxDurationMs: { type: "integer", minimum: 10000 }
           },
@@ -174,6 +184,7 @@ const tools = [
         input: { type: "string" },
         budget: { type: "object", additionalProperties: false, properties: {
           maxCalls: { type: "integer" }, maxTotalTokens: { type: "integer" },
+          costPolicy: { type: "string", enum: ["observe", "enforce", "disabled"] },
           maxApiEquivalentUsd: { type: "number" }, maxDurationMs: { type: "integer" }
         } },
         confirmBudget: { type: "boolean" },
@@ -239,6 +250,7 @@ async function invoke(name, args = {}) {
     });
   }
   if (name === "omp_providers") return getProviderReadiness();
+  if (name === "omp_storage_status") return { ...storageStatus(), startupRecovery };
   if (name === "omp_runtime_status") return runtimeStatus();
   if (name === "omp_runtime_start") return startRuntime(args);
   if (name === "omp_runtime_stop") return stopRuntime(args);
@@ -285,7 +297,7 @@ rl.on("line", async (line) => {
       result(request.id, {
         protocolVersion: request.params?.protocolVersion || "2025-06-18",
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "omp-orchestrator", version: "0.5.0" }
+        serverInfo: { name: "omp-orchestrator", version: "0.6.0" }
       });
     } else if (request.method === "tools/list") {
       result(request.id, { tools });

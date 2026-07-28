@@ -10,7 +10,13 @@ const templates = {
       { id: "codex", type: "attestation", dependsOn: ["validate"] },
       { id: "finalize", type: "inference", role: "default", contract: "standalone_html", maxOutputTokens: 19500, estimatedInputTokens: 14000, conditional: true, dependsOn: ["codex"] }
     ],
-    defaultBudget: { maxCalls: 5, maxTotalTokens: 70000, maxApiEquivalentUsd: 0.8, maxDurationMs: 1200000 }
+    defaultBudget: {
+      maxCalls: 5,
+      maxTotalTokens: 70000,
+      maxDurationMs: 1200000,
+      costPolicy: "observe",
+      maxApiEquivalentUsd: 0.8
+    }
   },
   "single-file-web-app": {
     id: "single-file-web-app",
@@ -26,7 +32,13 @@ const templates = {
       { id: "analysis-b", type: "inference", role: "advisor", contract: "notes", maxOutputTokens: 3000, estimatedInputTokens: 2000 },
       { id: "codex", type: "attestation", dependsOn: ["analysis-a", "analysis-b"] }
     ],
-    defaultBudget: { maxCalls: 2, maxTotalTokens: 20000, maxApiEquivalentUsd: 0.5, maxDurationMs: 900000 }
+    defaultBudget: {
+      maxCalls: 2,
+      maxTotalTokens: 20000,
+      maxDurationMs: 900000,
+      costPolicy: "observe",
+      maxApiEquivalentUsd: 0.5
+    }
   }
 };
 

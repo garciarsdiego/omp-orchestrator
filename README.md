@@ -97,9 +97,48 @@ this is diagnostic evidence, not a fixed product contract.
 5. Record `accept`, `revise`, or `reject` through `omp_run_attest`.
 6. Retrieve an accepted artifact with `omp_run_result`.
 
+Subscription-backed providers use `costPolicy: "observe"` by default. Calls,
+tokens, and duration remain hard safety limits, while API-equivalent USD is
+reported as an operational comparison rather than treated as an invoice or a
+blocking spend limit. Use `costPolicy: "enforce"` for pay-as-you-go credentials,
+or `disabled` when equivalent-cost reporting is not useful.
+
+Budget values are workload envelopes, not universal constants:
+
+- `maxCalls` is derived from the template's reachable inference nodes plus only
+  explicitly approved fallbacks;
+- `maxTotalTokens` is the sum of estimated input and maximum output for those
+  calls, with a measured safety margin;
+- `maxDurationMs` should start from observed provider p95 latency plus bounded
+  orchestration overhead.
+
+Compare estimates with actual usage after each run and tighten or expand future
+envelopes. A retry or newly reachable fallback is a budget change, not free
+capacity.
+
 Runs receive separate directories, job stores, artifacts, event logs, hashes,
 budgets, and provenance. Composer 2.5 is blocked for HTML artifact contracts over
 the Responses gateway because repeated clean-room runs produced invalid outputs.
+
+## Durable storage
+
+Version 0.6 stores orchestration state in a user-local SQLite database with WAL,
+foreign keys, bounded busy waiting, and transactional schema migrations. The
+default Windows location is `%LOCALAPPDATA%\omp-orchestrator`; override it with
+`OMP_ORCHESTRATOR_STATE_DIR`.
+
+Artifacts are immutable SHA-256 objects under the same state root and run
+records reference their hashes. Legacy `%TEMP%\omp-orchestrator` JSON data is
+never imported automatically:
+
+```powershell
+npm run migrate:json
+npm run migrate:json -- --apply
+```
+
+The first command is a dry run. The second applies only when all inspected JSON
+is valid and free from blocked high-confidence secret patterns. Keep the legacy
+directory until the imported ledger and artifacts have been reviewed.
 
 ## Security boundaries
 
