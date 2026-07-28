@@ -115,7 +115,9 @@ async function startNode(nodeId, role, contract, prompt, maxOutputTokens, timeou
   const compatibility = routingCompatibility(selector, contract);
   if (!compatibility.allowed) throw new Error(compatibility.reason);
   assertBudget(run, selector, prompt, maxOutputTokens);
-  const created = await createJob({ role, prompt, contract, maxOutputTokens, timeoutMs, confirmQuota: true, jobRoot: runJobsDir(id) });
+  const created = await createJob({
+    role, prompt, contract, maxOutputTokens, timeoutMs, confirmQuota: true, jobRoot: runJobsDir(id), runId: id
+  });
   updateNode(nodeId, { status: "running", role, selector, jobId: created.id, startedAt: new Date().toISOString() });
   appendRunEvent(id, "node.started", { node: nodeId, role, selector, jobId: created.id });
   return { jobId: created.id, result: null };

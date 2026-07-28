@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.7.0 — Unreleased
+
+### Added
+
+- Versioned declarative pricing registry with provenance, effective dates,
+  confidence, staleness, exact/family/range/proxy resolution, and unknown
+  preservation.
+- Pricing coverage reporting for active roles through
+  `omp_pricing_coverage`.
+- Standalone job estimation through `omp_job_estimate`.
+- Per-job hard limits for calls, input/output/total tokens, duration, and
+  retries, plus `observe`, `enforce`, and `disabled` equivalent-cost policies.
+- Persisted pricing snapshots, consumption events, and structured policy events
+  in SQLite schema version 2.
+- Explicit job cancellation through `omp_job_cancel`.
+
+### Changed
+
+- Standalone retries consume the remaining policy envelope.
+- Provider usage is evaluated after each response so output or reasoning tokens
+  beyond the requested maximum become a durable `limit_exceeded` result.
+- Run-node jobs now link consumption records to their parent run.
+
+### Validation
+
+- Pricing precedence, proxies, staleness, unknown coverage, and range pricing.
+- Observe/enforce behavior, actual token overruns, retry allowances, deadline
+  accounting, cancellation, and idempotent consumption events.
+
 ## 0.6.0 — Unreleased
 
 ### Added

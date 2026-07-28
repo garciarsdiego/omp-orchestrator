@@ -116,6 +116,16 @@ Compare estimates with actual usage after each run and tighten or expand future
 envelopes. A retry or newly reachable fallback is a budget change, not free
 capacity.
 
+Version 0.7 applies the same policy vocabulary to standalone jobs. Use
+`omp_job_estimate` before quota approval, `omp_job_create` with a bounded
+`budget`, and `omp_job_cancel` for explicit termination. `omp_pricing_coverage`
+reports which active roles have exact, ranged, proxied, stale, or unknown
+equivalent-cost data.
+
+Pricing data lives in `config/pricing-registry.json`. Every consumption event
+records the registry revision and digest used at execution time. Unknown prices
+remain unknown and are never silently aggregated as zero.
+
 Runs receive separate directories, job stores, artifacts, event logs, hashes,
 budgets, and provenance. Composer 2.5 is blocked for HTML artifact contracts over
 the Responses gateway because repeated clean-room runs produced invalid outputs.

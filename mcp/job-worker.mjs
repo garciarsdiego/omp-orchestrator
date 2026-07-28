@@ -1,5 +1,9 @@
 import { extractResponseText, normalizeOutput, requestInference } from "./gateway.mjs";
-import { readJob, updateJob } from "./job-store.mjs";
+import {
+  getJobConsumptionSummary, readJob, recordConsumptionEvent, recordPolicyEvents, updateJob
+} from "./job-store.mjs";
+import { evaluateActualUsage } from "./budget.mjs";
+import { actualUsageCost } from "./pricing.mjs";
 
 const id = process.argv[2];
 if (!id) process.exit(2);
@@ -23,26 +27,45 @@ async function run() {
       reasoning: job.request.reasoning,
       maxOutputTokens: job.request.maxOutputTokens,
       cacheKey: `omp-orchestrator:${job.id}:${job.attempt}`,
-      timeoutMs: job.request.timeoutMs
+      timeoutMs: job.request.timeoutMs,
+      shouldCancel: () => ["cancellation_requested", "cancelled"].includes(readJob(id).status)
     });
     const extracted = extractResponseText(payload);
     const normalized = normalizeOutput(extracted, job.request.contract);
     const output = normalized.output;
     const validation = normalized.validation;
-    updateJob(id, (current) => ({
+    const usage = payload.usage || null;
+    const cost = usage ? actualUsageCost(job.request.selector, usage) : null;
+    const prior = getJobConsumptionSummary(id);
+    const completedAt = new Date().toISOString();
+    const durationMs = job.startedAt ? Date.parse(completedAt) - Date.parse(job.startedAt) : 0;
+    const policy = evaluateActualUsage({ budget: job.budget, usage, prior, cost, durationMs });
+    const hardBreaches = policy.breaches.filter((breach) => breach.enforced);
+    const completed = updateJob(id, (current) => ({
       ...current,
-      status: validation.valid ? "succeeded" : "invalid",
-      completedAt: new Date().toISOString(),
+      status: current.status === "cancellation_requested"
+        ? "cancelled"
+        : hardBreaches.length
+          ? "limit_exceeded"
+          : validation.valid ? "succeeded" : "invalid",
+      completedAt,
       output,
       validation,
       normalization: normalized.changed ? { transformation: normalized.transformation } : null,
-      usage: payload.usage || null,
-      error: null
+      usage,
+      policy: { aggregate: policy.aggregate, breaches: policy.breaches },
+      error: hardBreaches.length
+        ? { name: "BudgetExceededError", message: `Actual usage exceeded: ${hardBreaches.map((item) => item.limit).join(", ")}.` }
+        : null
     }));
+    recordConsumptionEvent(completed, cost);
+    recordPolicyEvents(completed, policy.breaches, completed.budget.costPolicy);
   } catch (error) {
     updateJob(id, (job) => ({
       ...job,
-      status: "failed",
+      status: error.name === "CancellationError" || job.status === "cancellation_requested"
+        ? "cancelled"
+        : "failed",
       completedAt: new Date().toISOString(),
       error: { message: error.message, name: error.name || "Error" }
     }));

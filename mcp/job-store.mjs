@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { getDatabase, STATE_ROOT } from "./storage.mjs";
+import { loadPricingRegistry } from "./pricing.mjs";
 
 export const JOB_ROOT = process.env.OMP_ORCHESTRATOR_DATA_DIR
   || path.join(STATE_ROOT, "jobs");
@@ -83,6 +84,106 @@ export function listJobs(limit = 25, root = JOB_ROOT) {
   `).all(scopeFor(root), Math.max(1, Math.min(100, limit))).map((row) => JSON.parse(row.payload));
 }
 
+export function getJobAttempts(id) {
+  assertJobId(id);
+  return getDatabase().prepare(`
+    SELECT attempt, status, selector, started_at AS startedAt, completed_at AS completedAt,
+      usage_json AS usageJson, error_json AS errorJson
+    FROM job_attempts WHERE job_id = ? ORDER BY attempt
+  `).all(id).map((row) => ({
+    ...row,
+    usage: row.usageJson ? JSON.parse(row.usageJson) : null,
+    error: row.errorJson ? JSON.parse(row.errorJson) : null
+  }));
+}
+
+export function getJobConsumptionSummary(id) {
+  assertJobId(id);
+  const row = getDatabase().prepare(`
+    SELECT COUNT(*) AS calls,
+      COALESCE(SUM(input_tokens), 0) AS inputTokens,
+      COALESCE(SUM(output_tokens), 0) AS outputTokens,
+      COALESCE(SUM(total_tokens), 0) AS totalTokens,
+      CASE WHEN SUM(CASE WHEN equivalent_high_usd IS NULL THEN 1 ELSE 0 END) > 0
+        THEN NULL ELSE COALESCE(SUM(equivalent_high_usd), 0) END AS equivalentHighUsd
+    FROM consumption_events WHERE job_id = ?
+  `).get(id);
+  return row || { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, equivalentHighUsd: 0 };
+}
+
+export function recordConsumptionEvent(job, cost) {
+  if (!job.usage) return;
+  const pricing = cost?.pricing || {};
+  const db = getDatabase();
+  if (pricing.registryDigest) {
+    const registry = loadPricingRegistry();
+    db.prepare(`
+      INSERT INTO pricing_snapshots(digest, revision, loaded_at, payload)
+      VALUES (?, ?, ?, ?) ON CONFLICT(digest) DO NOTHING
+    `).run(
+      pricing.registryDigest,
+      pricing.registryRevision || "unknown",
+      new Date().toISOString(),
+      JSON.stringify(registry)
+    );
+  }
+  db.prepare(`
+    INSERT INTO consumption_events(
+      at, run_id, job_id, attempt, selector, input_tokens, cached_input_tokens,
+      output_tokens, total_tokens, duration_ms, registry_digest, pricing_status,
+      match_tier, equivalent_low_usd, equivalent_high_usd, currency
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(job_id, attempt) DO UPDATE SET
+      input_tokens=excluded.input_tokens, cached_input_tokens=excluded.cached_input_tokens,
+      output_tokens=excluded.output_tokens, total_tokens=excluded.total_tokens,
+      duration_ms=excluded.duration_ms, registry_digest=excluded.registry_digest,
+      pricing_status=excluded.pricing_status, match_tier=excluded.match_tier,
+      equivalent_low_usd=excluded.equivalent_low_usd,
+      equivalent_high_usd=excluded.equivalent_high_usd, currency=excluded.currency
+  `).run(
+    job.completedAt || new Date().toISOString(),
+    job.runId || null,
+    job.id,
+    job.attempt,
+    job.request.selector,
+    job.usage.input_tokens || 0,
+    job.usage.input_tokens_details?.cached_tokens || 0,
+    job.usage.output_tokens || 0,
+    job.usage.total_tokens || 0,
+    job.startedAt && job.completedAt ? Date.parse(job.completedAt) - Date.parse(job.startedAt) : null,
+    pricing.registryDigest || null,
+    pricing.status || "unknown",
+    pricing.matchTier || "unknown",
+    cost?.lowUsd ?? null,
+    cost?.highUsd ?? null,
+    pricing.currency || "USD"
+  );
+}
+
+export function recordPolicyEvents(job, breaches, mode) {
+  const insert = getDatabase().prepare(`
+    INSERT INTO policy_events(
+      at, run_id, job_id, attempt, scope, limit_name, threshold_value,
+      observed_value, mode, action_taken, payload
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const breach of breaches) {
+    insert.run(
+      new Date().toISOString(),
+      job.runId || null,
+      job.id,
+      job.attempt,
+      "job",
+      breach.limit,
+      breach.threshold,
+      breach.observed,
+      mode,
+      breach.enforced ? "blocked" : "observed",
+      JSON.stringify(breach)
+    );
+  }
+}
+
 export function publicJob(job, { includeOutput = false } = {}) {
   const visible = {
     id: job.id,
@@ -94,6 +195,9 @@ export function publicJob(job, { includeOutput = false } = {}) {
     reasoning: job.request.reasoning,
     contract: job.request.contract,
     attempt: job.attempt,
+    budget: job.budget || null,
+    estimate: job.estimate || null,
+    deadlineAt: job.deadlineAt || null,
     createdAt: job.createdAt,
     startedAt: job.startedAt || null,
     completedAt: job.completedAt || null,
@@ -103,6 +207,8 @@ export function publicJob(job, { includeOutput = false } = {}) {
     validation: job.validation || null,
     normalization: job.normalization || null,
     usage: job.usage || null,
+    policy: job.policy || null,
+    cancellation: job.cancellation || null,
     error: job.error || null
   };
   if (includeOutput) visible.output = job.output || null;
