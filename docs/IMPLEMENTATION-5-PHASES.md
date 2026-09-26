@@ -306,6 +306,8 @@ Execuções reais pelo Orchestrator (`omp_agent_create` via CLI, workspace vazio
 
 ### 11. Rodada autorizada (26/09/2026) — relatório de backends + testes de UI + Cursor inclusivo
 
+Commits: `8b4a54a` (produto+README), `3d3cdb1` (testes de UI/HTTP), `35be67b` (docs) e `42c7623` (smoke limpo).
+
 Commits: `8b4a54a` (produto+README), `3d3cdb1` (testes de UI/HTTP) e `35be67b` (docs).
 
 - `omp_agent_backends` agora declara, por backend, `usageReported`, `usageSemantics`, `usageIncludes`, `cacheBehavior`, `promptDelivery` e `usageUnknownAs` (sempre omitido, nunca zero), além das capacidades antigas (`steer`, `abort`, `sessionEvents`, `tokenLimitEnforced: false`, `providerCostKnown: false`).
@@ -321,3 +323,13 @@ Commits: `8b4a54a` (produto+README), `3d3cdb1` (testes de UI/HTTP) e `35be67b` (
   - `test/http-auth.test.mjs`: `/api/overview`, `/api/metrics` e `/metrics` exigem token nomeado, nunca ecoam o token e retornam `{ runs, jobs, agents }` com os três arrays.
 - **Verificações desta rodada:** `npm run lint` limpo no Windows; suíte Windows 114 passaram + 2 omitidos (Linux); imagem Linux `omp-orchestrator:push` com o código final: `npm test` 116/116; `test/compose/smoke.sh` em projeto limpo `omp-smoke-push` com `SMOKE OK` (todos os PASS, incluindo job fake no sidecar, restart, 3 rounds de sidecar-restart, abort e backup/restore); sem migração, então `upgrade-rollback.sh` não se aplica.
 - **Não validado nesta rodada:** vendor do Cursor; motor real dentro do container Linux; VPS/TLS; isolamento para workloads não confiáveis; browser real do console.
+
+### 12. Pós-merge (26/09/2026, branch `codex/omp-postmerge` de `origin/main`)
+
+- PR #3 mergeado em `556caf6` (`MERGED` em 2026-09-26T18:43:23Z) após push `42c7623` e CI verde nos dois gatilhos (Node Ubuntu/Windows + imagem Linux + smoke do Compose).
+- Nova branch `codex/omp-postmerge` criada de `origin/main` atualizado, sem reescrever histórico. Worktree continua em `C:\Users\Diego\Documents\ChatGPT\OMP-Orchestrator-handoff`.
+- Gate 2 completo (7 CLIs Windows dentro do container Linux) **bloqueado por inviabilidade técnica**: os motores instalados são `PE32+ .exe` Windows (`codex.exe`, `claude.exe`, `droid.exe`, `grok.exe`, `devin.exe`, `muse-*.exe`, `cursor-agent` via `node.exe`+`index.js`); o container é Linux x86_64 e não há Wine. Copiar credencial Windows para o sidecar não faria os binários executarem.
+- Proposta mantida: gate 2 em escopo mínimo (1x `omp-rpc` real com login provisionado no sidecar + 1x `command-json` fake/adaptador) ou escopo completo com CLIs Linux instaladas no sidecar, o que exige instalar/autenticar as versões Linux e nova autorização de quota.
+- Cursor real com a nova normalização inclusiva continua pendente de reexecução com quota.
+- Observabilidade (item 6, opção B) ainda não implementada: só existe a base (`/metrics` + `/api/metrics` + `omp_metrics` + exemplo de scrape com `credentials_file` em `DEPLOY-VPS.md`).
+- Browser real do console continua pendente (item 4: guia abaixo).
