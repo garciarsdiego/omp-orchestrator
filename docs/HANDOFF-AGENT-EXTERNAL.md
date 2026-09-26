@@ -25,7 +25,7 @@ Não estão autorizados:
 ## Estado confirmado
 
 - **Worktree de continuação:** `C:\Users\Diego\Documents\ChatGPT\OMP-Orchestrator-handoff`, branch `codex/omp-handoff`, enviada para `origin`.
-- **PR:** [garciarsdiego/omp-orchestrator#3](https://github.com/garciarsdiego/omp-orchestrator/pull/3), aberto contra `main`, sem auto-merge. O CI ficou verde no `43f973a` nos dois gatilhos (jobs Node Ubuntu/Windows, testes na imagem e smoke do Compose no runner). Confira o resultado dos pushes posteriores no PR.
+- **PR:** [garciarsdiego/omp-orchestrator#3](https://github.com/garciarsdiego/omp-orchestrator/pull/3), aberto contra `main`, sem auto-merge. O CI ficou verde em `43f973a`, `94e75a4` e `ad38a3f`, nos dois gatilhos (jobs Node Ubuntu/Windows, testes na imagem e smoke do Compose no runner). O PR aguarda revisão e merge pelo usuário.
 - **Commits sobre `75cf897`,** em ordem (`git log --oneline 75cf897..HEAD`):
   - `2c4d818` listJobs;
   - `186a0de` WAL/SQLITE_BUSY;
