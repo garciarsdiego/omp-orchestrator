@@ -59,7 +59,7 @@ function profileCapabilities(name) {
     claude: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "cache reads/writes are exclusive of input_tokens and are summed into the normalized input total", promptDelivery: "stdin", usageUnknownAs: "unknown stays omitted (never zero)" },
     droid: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "same exclusive-cache sum as the other Anthropic-style CLIs", promptDelivery: "private temp file", usageUnknownAs: "unknown stays omitted (never zero)" },
     cursor: { usageReported: true, usageSemantics: "cursor-exclusive-cache", usageIncludes: ["inputTokens", "cacheReadTokens", "cacheWriteTokens", "outputTokens"], cacheBehavior: "inputTokens is uncached input only; cacheReadTokens/cacheWriteTokens are exclusive and summed into the normalized input (measured on cursor-agent 2026.09.26; vendor docs do not define it)", promptDelivery: "argv (visible in the local process list while running)", usageUnknownAs: "unknown stays omitted (never zero)" },
-    grok: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "cache reads/writes are exclusive of input_tokens and are summed into the normalized input total", promptDelivery: "argv (visible in the local process list while running)", usageUnknownAs: "unknown stays omitted (never zero)" },
+    grok: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "cache reads/writes are exclusive of input_tokens and are summed into the normalized input total", promptDelivery: "private temp file", usageUnknownAs: "unknown stays omitted (never zero)" },
     devin: { usageReported: false, usageSemantics: "plain-text-only", usageIncludes: [], cacheBehavior: "no token usage reported", promptDelivery: "private temp file", usageUnknownAs: "null (not zero)" },
     muse: { usageReported: false, usageSemantics: "terminal-event-only", usageIncludes: [], cacheBehavior: "no token usage reported", promptDelivery: "private temp file", usageUnknownAs: "null (not zero)" }
   };
@@ -159,9 +159,10 @@ export const CLI_PROFILES = {
   },
 
   grok: {
-    // grok takes the prompt only as an argument (-p); see cursor.
-    promptVia: "argv",
-    args: (fixed, prompt) => [...fixed, "--output-format", "json", "-p", "--", prompt],
+    // --prompt-file keeps the prompt out of the process list, and a prompt
+    // starting with "-" cannot be mistaken for an option (-p requires a value).
+    promptVia: "file",
+    args: (fixed, promptFile) => [...fixed, "--output-format", "json", "--prompt-file", promptFile],
     parse(stdout) {
       const doc = parseJson(stdout, "grok");
       if (typeof doc.text !== "string") fail("grok result has no text.");

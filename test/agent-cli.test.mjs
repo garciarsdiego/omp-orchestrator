@@ -69,6 +69,8 @@ test("adapter capabilities report cursor cache as exclusive counters", () => {
   assert.equal(CLI_PROFILES.codex.promptVia, "stdin");
   assert.equal(CLI_PROFILES.codex.args(["-s", "read-only"], "PROMPT").at(-1), "-");
   assert.equal(byProfile.codex.promptDelivery, "stdin");
+  // Only cursor still takes the prompt as an argument.
+  assert.deepEqual(Object.keys(CLI_PROFILES).filter((name) => CLI_PROFILES[name].promptVia === "argv"), ["cursor"]);
   // A cursor document without usage stays unknown instead of zero.
   assert.equal(cliProfile("cursor").parse(JSON.stringify({
     type: "result", subtype: "success", is_error: false, result: "ok"
