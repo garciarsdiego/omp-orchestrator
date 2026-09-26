@@ -23,7 +23,7 @@ pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; exit 1; }
 
 export OMP_GATE2_PORT="$PORT" OMP_GATE2_ORIGIN="http://127.0.0.1:$PORT" \
-  OMP_GATE2_TOKEN_FILE="$QA/access-token" OMP_GATE2_BACKENDS="$QA/backends.json" OMP_GATE2_CLIS="$CLIS"
+  OMP_GATE2_TOKEN_FILE="$QA/access-token" OMP_GATE2_BACKENDS="$QA/backends.json"
 dc() { docker compose -p "$PROJECT" -f "$REPO/test/compose/gate2.yaml" -f "$QA/logins.yaml" "$@"; }
 
 if [ "${1:-}" = down ]; then
@@ -43,16 +43,31 @@ umask 077
 openssl rand -base64 48 | tr -d '\n' > "$QA/access-token"
 chmod 0644 "$QA/access-token"   # descartável; o container (UID 1000) precisa ler
 printf 'Authorization: Bearer %s\n' "$(cat "$QA/access-token")" > "$QA/auth-header"
-cp "$REPO/test/compose/gate2.backends.json" "$QA/backends.json"; chmod 0644 "$QA/backends.json"
+# backends.json usa /home/node como marcador do HOME do usuário.
+sed "s|/home/node|$HOME|g" "$REPO/test/compose/gate2.backends.json" > "$QA/backends.json"; chmod 0644 "$QA/backends.json"
 
-# Override com os logins que existem neste HOME (nomes de caminho apenas).
+# Override: o sidecar usa o mesmo caminho de HOME do host, num tmpfs privado,
+# com os logins existentes montados por cima (só caminhos; nada é copiado).
+# Os instaladores deixam symlinks absolutos (~/.local/bin/grok -> $HOME/.grok/...).
 {
   echo "services:"
   echo "  agent-worker:"
+  echo "    environment:"
+  echo "      HOME: \"$HOME\""
+  echo "      PATH: \"$HOME/.local/share/node/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin\""
+  echo "    tmpfs:"
+  echo "      - /tmp"
+  echo "      - \"$HOME:uid=1000,gid=1000,mode=0700\""
+  # Pais dos mounts aninhados; sem isso o Docker os cria como root. O OMP
+  # extrai o addon nativo em ~/.omp/natives e o carrega (exec).
+  echo "      - \"$HOME/.omp:uid=1000,gid=1000,mode=0700,exec\""
+  echo "      - \"$HOME/.config:uid=1000,gid=1000,mode=0700\""
   echo "    volumes:"
-  echo "      - \"$OMP_HOME:/home/node/.omp/agent:rw\""
+  echo "      - \"$OMP_HOME:$HOME/.omp/agent:rw\""
+  # Devin e Muse gravam logs/locks em ~/.local; ele fica rw (fronteira de confiança, decisão 11).
+  echo "      - \"$CLIS:$HOME/.local:rw\""
   for login in .codex .claude .claude.json .cursor .config/cursor .grok .factory .config/devin .config/muse; do
-    if [ -e "$HOME/$login" ]; then echo "      - \"$HOME/$login:/home/node/$login:rw\""; else echo "    # ausente: ~/$login" >&2; fi
+    if [ -e "$HOME/$login" ]; then echo "      - \"$HOME/$login:$HOME/$login:rw\""; else echo "    # ausente: ~/$login" >&2; fi
   done
 } > "$QA/logins.yaml"
 
@@ -76,7 +91,7 @@ for _ in $(seq 1 30); do
 done
 [ "$code" = 200 ] || fail "readyz $code"
 pass "readyz 200"
-[ -z "$(dc exec -T orchestrator sh -c 'ls -A /home/node/.omp 2>/dev/null')" ] || fail "credencial OMP visível no serviço HTTP"
+[ -z "$(dc exec -T orchestrator sh -c "ls -A '$HOME' /home/node/.omp 2>/dev/null")" ] || fail "credencial visível no serviço HTTP"
 dc exec -T agent-worker test ! -e /run/omp-orchestrator/access-token || fail "token HTTP visível no sidecar"
 pass "credenciais só no sidecar, token só no HTTP"
 
@@ -100,7 +115,8 @@ run_job() {
   call "{\"name\":\"omp_agent_result\",\"arguments\":{\"id\":\"$id\"}}" > "$QA/$backend.result.json"
   printf '%s %s %ss %s\n' "$backend" "$status" "$(( $(date +%s) - start ))" \
     "$(grep -o '"total_tokens":[0-9]*' "$QA/$backend.result.json" | head -1)" | tee -a "$QA/summary.txt"
-  [ "$status" = succeeded ] || { head -c 800 "$QA/$backend.result.json"; echo; return 1; }
+  [ "$status" = succeeded ] || { call "{\"name\":\"omp_agent_get\",\"arguments\":{\"id\":\"$id\"}}" | grep -o '"code":"[^"]*"' | head -1
+    call "{\"name\":\"omp_agent_events\",\"arguments\":{\"id\":\"$id\"}}" | grep -o '"type":"agent.failed"[^}]*' | cut -c1-900; return 1; }
   grep -q "GATE2-$backend-OK" "$QA/$backend.result.json" || { echo "saída inesperada em $backend"; return 1; }
 }
 

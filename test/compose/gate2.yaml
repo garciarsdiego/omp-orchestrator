@@ -39,23 +39,18 @@ services:
     restart: "no"
     depends_on:
       - orchestrator
+    # HOME, PATH, the private tmpfs HOME and the login mounts come from the
+    # override gate2.sh writes: the sidecar uses the host user's HOME path so
+    # absolute symlinks and paths inside CLI configs resolve.
     environment:
-      # The CLIs look for their logins under HOME. /home/node is a private
-      # tmpfs; gate2.sh bind-mounts each existing login path on top of it.
-      HOME: /home/node
       OMP_ORCHESTRATOR_AGENT_DISPATCH: external
       OMP_ORCHESTRATOR_WORKSPACE_ROOT: /workspaces
       OMP_ORCHESTRATOR_BACKENDS_FILE: /run/omp-orchestrator/backends.json
-      PATH: /home/node/.local/share/node/bin:/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin
     volumes:
       - omp-gate2-state:/var/lib/omp-orchestrator
       - omp-gate2-workspaces:/workspaces
       - ${OMP_GATE2_BACKENDS:?set by gate2.sh}:/run/omp-orchestrator/backends.json:ro
-      - ${OMP_GATE2_CLIS:?set by gate2.sh}:/home/node/.local:ro
     read_only: true
-    tmpfs:
-      - /tmp
-      - /home/node:uid=1000,gid=1000,mode=0700
     security_opt:
       - no-new-privileges:true
     healthcheck:
