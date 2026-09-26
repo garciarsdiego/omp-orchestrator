@@ -64,6 +64,31 @@ printf 'ana:%s\n' "$(openssl rand -base64 48 | tr -d '\n')" >> secrets/access-to
 
 Escreva o arquivo novo de forma atômica (arquivo temporário + `mv`). Se a versão nova for inválida (vazia, token curto, duplicado), o servidor registra o erro e **mantém os tokens anteriores**, para não bloquear os operadores. Um único token numa linha sem nome continua funcionando e aparece como `default`.
 
+## Métricas
+
+`GET /metrics` (formato de texto do Prometheus 0.0.4) e `GET /api/metrics` (JSON) exigem o mesmo bearer da API. A mesma visão em JSON sai pela ferramenta `omp_metrics` (CLI/MCP). O conteúdo:
+
+- jobs por tipo (`inference`/`agent`) e status;
+- runs por status;
+- eventos de consumo e tokens registrados, incluindo os de preço desconhecido;
+- resultados de auditoria;
+- prontidão e idade do heartbeat do sidecar;
+- respostas HTTP por classe de status e bearers recusados desde o início do processo.
+
+Não há prompts, outputs, argumentos nem segredos. As contagens de jobs e runs refletem o que está armazenado, não uma taxa.
+
+Para o Prometheus, dê a ele um token próprio (por exemplo `prometheus:<token>` no arquivo de tokens) e use:
+
+```yaml
+scrape_configs:
+  - job_name: omp-orchestrator
+    metrics_path: /metrics
+    authorization:
+      credentials_file: /etc/prometheus/omp-orchestrator-token
+    static_configs:
+      - targets: ["127.0.0.1:8080"]
+```
+
 ## VPS com TLS reverso
 
 No VPS, mantenha `127.0.0.1:8080:8080` no Compose e faça Caddy, Nginx ou outro proxy TLS do host encaminhar para `http://127.0.0.1:8080`. Configure a origem pública antes de subir:

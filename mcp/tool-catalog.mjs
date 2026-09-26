@@ -15,6 +15,7 @@ import {
   listAgentBackends, listAgentJobs, steerAgentJob
 } from "./agent-jobs.mjs";
 import { AUDITED_OPERATIONS, listAudit, recordAudit } from "./audit.mjs";
+import { collectMetrics } from "./metrics.mjs";
 
 export const startupRecovery = reconcileInterruptedWork();
 
@@ -348,6 +349,11 @@ export const tools = [
     description: "List recent state-changing operations with actor, mechanism, target and outcome (no arguments are stored).",
     inputSchema: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 500 } },
       additionalProperties: false }
+  },
+  {
+    name: "omp_metrics",
+    description: "Operational metrics as JSON: jobs and runs by status, consumption totals, audit outcomes, agent supervisor and HTTP counters.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false }
   }
 ];
 
@@ -431,5 +437,6 @@ async function dispatch(name, args) {
   if (name === "omp_agent_steer") return steerAgentJob(args);
   if (name === "omp_agent_abort") return abortAgentJob(args);
   if (name === "omp_audit_list") return listAudit(args);
+  if (name === "omp_metrics") return collectMetrics();
   throw new Error(`Unknown tool: ${name}`);
 }

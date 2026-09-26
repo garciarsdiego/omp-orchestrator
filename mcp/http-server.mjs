@@ -8,6 +8,7 @@ import { invoke, tools } from "./tool-catalog.mjs";
 import { storageStatus } from "./storage.mjs";
 import { agentSupervisorStatus } from "./agent-jobs.mjs";
 import { withActor } from "./request-context.mjs";
+import { collectMetrics, countAuthFailure, countHttpRequest, renderPrometheus } from "./metrics.mjs";
 
 const MAX_API_BODY = 1_048_576;
 const WEB_ROOT = new URL("../web/", import.meta.url);
@@ -143,6 +144,7 @@ export async function startHttpServer({
   const handler = createMcpHandler(createMcpServer);
   const handleMcp = toNodeHandler(handler, { onerror: (error) => console.error("MCP HTTP error:", error?.name || "Error") });
   const server = http.createServer(async (req, res) => {
+    res.once("finish", () => countHttpRequest(res.statusCode));
     try {
       if (!validateHost(req, res)) return;
       const requestOrigin = req.headers.origin;
@@ -155,6 +157,7 @@ export async function startHttpServer({
 
       const actor = authenticate(req, tokens);
       if (!actor) {
+        countAuthFailure();
         res.setHeader("www-authenticate", "Bearer");
         return json(res, 401, { error: "Authentication required." });
       }
@@ -173,6 +176,19 @@ export async function startHttpServer({
         ok: supervisor.ready, storage: storageStatus(), agentSupervisor: supervisor
       });
     }
+    // Authenticated like the API: counts and states are operational data.
+    // Prometheus: `authorization.credentials_file` pointing at a token file.
+    if (req.method === "GET" && pathname === "/metrics") {
+      const body = renderPrometheus(collectMetrics());
+      res.writeHead(200, {
+        "content-type": "text/plain; version=0.0.4; charset=utf-8",
+        "content-length": Buffer.byteLength(body),
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff"
+      });
+      return void res.end(body);
+    }
+    if (req.method === "GET" && pathname === "/api/metrics") return json(res, 200, collectMetrics());
     if (req.method === "GET" && pathname === "/api/tools") {
       return json(res, 200, { tools });
     }
