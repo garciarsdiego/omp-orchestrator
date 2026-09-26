@@ -8,6 +8,7 @@
 #   KEEP=1 test/compose/gate2.sh         # deixa o stack de pé
 #   OMP_GATE2_ENV_FILE=/mnt/c/Users/me/.omp/agent/.env test/compose/gate2.sh
 #       (só os nomes em ENGINE_KEYS são lidos dele, para o sidecar)
+#   FAKE=1 test/compose/gate2.sh         # sem login nem quota: CLI e RPC fake (CI)
 #   test/compose/gate2.sh down
 set -euo pipefail
 
@@ -38,15 +39,37 @@ if [ "${1:-}" = down ]; then
   exit 0
 fi
 
-[ "$(id -u)" = 1000 ] || fail "UID $(id -u): o sidecar roda como node (1000) e não leria os logins"
-[ -f "$OMP_HOME/agent.db" ] || fail "sem agent.db em $OMP_HOME"
-[ -d "$CLIS/bin" ] || fail "sem CLIs em $CLIS/bin"
+FAKE="${FAKE:-0}"
+POLLS=130; [ "$FAKE" = 1 ] && POLLS=24   # x 5 s
+if [ "$FAKE" != 1 ]; then
+  [ "$(id -u)" = 1000 ] || fail "UID $(id -u): o sidecar roda como node (1000) e não leria os logins"
+  [ -f "$OMP_HOME/agent.db" ] || fail "sem agent.db em $OMP_HOME"
+  [ -d "$CLIS/bin" ] || fail "sem CLIs em $CLIS/bin"
+fi
 
 mkdir -p "$QA/secrets"; chmod 700 "$QA"; chmod 755 "$QA/secrets"
 umask 077
 openssl rand -base64 48 | tr -d '\n' > "$QA/secrets/access-token"
 chmod 0644 "$QA/secrets/access-token"   # descartável; o container (UID 1000) precisa ler
 printf 'Authorization: Bearer %s\n' "$(cat "$QA/secrets/access-token")" > "$QA/auth-header"
+
+if [ "$FAKE" = 1 ]; then
+  # Mesmos ids e mesmo adaptador; a CLI imita o formato real de cada perfil.
+  node=/usr/local/bin/node app=/opt/omp-orchestrator
+  {
+    echo '{ "backends": ['
+    echo "  { \"id\": \"real-rpc\", \"type\": \"omp-rpc\", \"executable\": \"$node\", \"args\": [\"$app/fixtures/fake-omp-rpc.mjs\"] },"
+    sep=""
+    for p in codex claude droid cursor grok devin muse; do
+      printf '%s  { "id": "real-%s", "type": "command-json", "executable": "%s", "args": ["%s/scripts/agent-cli-adapter.mjs", "%s", "--launch", "%s/fixtures/fake-agent-cli.mjs", "--launch", "%s", "--", "%s"] }' \
+        "$sep" "$p" "$node" "$app" "$p" "$app" "$p" "$node"
+      sep=$',\n'
+    done
+    printf '\n] }\n'
+  } > "$QA/backends.json"
+  chmod 0644 "$QA/backends.json"
+  printf 'services:\n  agent-worker:\n    tmpfs: [ /tmp ]\n' > "$QA/logins.yaml"
+else
 # backends.json usa /home/node como marcador do HOME do usuário.
 sed "s|/home/node|$HOME|g" "$REPO/test/compose/gate2.backends.json" > "$QA/backends.json"; chmod 0644 "$QA/backends.json"
 
@@ -80,9 +103,10 @@ sed "s|/home/node|$HOME|g" "$REPO/test/compose/gate2.backends.json" > "$QA/backe
 if [ -n "${OMP_GATE2_ENV_FILE:-}" ]; then
   [ -r "$OMP_GATE2_ENV_FILE" ] || fail "OMP_GATE2_ENV_FILE ilegível"
   # Filtra por nome; valores não são impressos. O arquivo some com o QA.
-  grep -E "^($(echo "$ENGINE_KEYS" | tr ' ' '|'))=" "$OMP_GATE2_ENV_FILE" | tr -d '' > "$QA/engines.env" || true
+  grep -E "^($(echo "$ENGINE_KEYS" | tr ' ' '|'))=" "$OMP_GATE2_ENV_FILE" | tr -d '\r' > "$QA/engines.env" || true
   echo "chaves de motor: $(cut -d= -f1 "$QA/engines.env" | paste -sd' ')"
 fi
+fi  # FAKE
 
 base="http://127.0.0.1:$PORT"
 call() { curl -s -H @"$QA/auth-header" -H 'Content-Type: application/json' -X POST "$base/api/call" -d "$1"; }
@@ -108,7 +132,7 @@ pass "readyz 200"
 dc exec -T agent-worker test ! -e /run/omp-orchestrator/secrets || fail "token HTTP visível no sidecar"
 pass "credenciais só no sidecar, token só no HTTP"
 
-if [[ " $ONLY " == *" real-rpc "* ]]; then
+if [ "$FAKE" != 1 ] && [[ " $ONLY " == *" real-rpc "* ]]; then
   step "omp models no sidecar (opencode-go)"
   dc exec -T agent-worker omp models --json > "$QA/models.json" 2>"$QA/models.err" || { tail -5 "$QA/models.err"; fail "omp models"; }
   grep -q 'opencode-go' "$QA/models.json" || fail "opencode-go ausente"
@@ -120,7 +144,7 @@ run_job() {
   start=$(date +%s)
   id=$(call "{\"name\":\"omp_agent_create\",\"arguments\":{\"backend\":\"$backend\",\"workspace\":\"gate2\",\"prompt\":\"$prompt\",\"idempotencyKey\":\"$key\",\"timeoutMs\":600000,\"confirmQuota\":true}}" | field id)
   [ -n "$id" ] || fail "create $backend"
-  for _ in $(seq 1 130); do
+  for _ in $(seq 1 "$POLLS"); do
     status=$(call "{\"name\":\"omp_agent_get\",\"arguments\":{\"id\":\"$id\"}}" | field status)
     case "$status" in succeeded|failed|cancelled|limit_exceeded|interrupted) break;; esac
     sleep 5
@@ -130,13 +154,17 @@ run_job() {
     "$(grep -o '"total_tokens":[0-9]*' "$QA/$backend.result.json" | head -1)" | tee -a "$QA/summary.txt"
   [ "$status" = succeeded ] || { call "{\"name\":\"omp_agent_get\",\"arguments\":{\"id\":\"$id\"}}" | grep -o '"code":"[^"]*"' | head -1
     call "{\"name\":\"omp_agent_events\",\"arguments\":{\"id\":\"$id\"}}" | grep -o '"type":"agent.failed"[^}]*' | cut -c1-900; return 1; }
-  grep -q "GATE2-$backend-OK" "$QA/$backend.result.json" || { echo "saída inesperada em $backend"; return 1; }
+  local want="GATE2-$backend-OK"
+  [ "$FAKE" = 1 ] && [ "$backend" = real-rpc ] && want='"output":"done"'   # fixture fixo
+  grep -q "$want" "$QA/$backend.result.json" || { echo "saída inesperada em $backend"; return 1; }
 }
 
 step "motores reais: $ONLY"
 failed=""
 for b in $ONLY; do
-  run_job "$b" "gate2-$b-$(date +%s)" "Reply with exactly: GATE2-$b-OK. Do not use tools." || failed="$failed $b"
+  prompt="Reply with exactly: GATE2-$b-OK. Do not use tools."
+  [ "$FAKE" = 1 ] && [ "$b" = real-rpc ] && prompt=complete   # o RPC fake só conclui com "complete"
+  run_job "$b" "gate2-$b-$(date +%s)" "$prompt" || failed="$failed $b"
 done
 echo; cat "$QA/summary.txt"
 [ -z "$failed" ] || fail "motores com falha:$failed"

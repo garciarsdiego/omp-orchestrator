@@ -1,0 +1,42 @@
+name: Upgrade and rollback rehearsal
+
+# Decision 12: a schema migration must stay readable by the previous image.
+# Runs only when storage code changes, and rehearses only when SCHEMA_VERSION
+# actually moved relative to the pull request base.
+on:
+  pull_request:
+    paths:
+      - mcp/storage.mjs
+      - mcp/migration.mjs
+      - mcp/*-store.mjs
+      - compose.yaml
+      - Dockerfile
+      - test/compose/upgrade-rollback.sh
+      - .github/workflows/upgrade-rollback.yml
+
+jobs:
+  rehearse:
+    name: Previous image reads the migrated database
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compare SCHEMA_VERSION with the base
+        id: schema
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          version() { grep -o 'SCHEMA_VERSION = [0-9]*' | grep -o '[0-9]*$'; }
+          old=$(git show "$BASE:mcp/storage.mjs" | version)
+          new=$(version < mcp/storage.mjs)
+          echo "base schema $old, head schema $new"
+          echo "changed=$([ "$old" != "$new" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: Upgrade, image-only rollback and pre-upgrade restore
+        if: steps.schema.outputs.changed == 'true'
+        env:
+          OLD_REF: ${{ github.event.pull_request.base.sha }}
+        run: bash test/compose/upgrade-rollback.sh
+      - name: No migration
+        if: steps.schema.outputs.changed != 'true'
+        run: echo "SCHEMA_VERSION unchanged; nothing to rehearse."

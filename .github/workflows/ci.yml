@@ -32,3 +32,5 @@ jobs:
       - run: docker run --rm omp-orchestrator:ci npm test
       - name: Compose smoke (loopback, fake engines, throwaway token)
         run: bash test/compose/smoke.sh
+      - name: Gate-2 engines through the adapter (fake CLIs and RPC, no login or quota)
+        run: FAKE=1 bash test/compose/gate2.sh
