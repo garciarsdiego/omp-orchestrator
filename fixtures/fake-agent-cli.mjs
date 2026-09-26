@@ -13,6 +13,7 @@ if (file) {
   prompt = readFileSync(file, "utf8");
 } else if (format === "grok") prompt = after("-p");
 else if (format === "cursor") prompt = args.at(-1);
+else if (format === "codex") prompt = args.at(-1) ?? "";
 else prompt = readFileSync(0, "utf8");
 const text = `received:${prompt}`;
 
