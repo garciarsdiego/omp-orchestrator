@@ -16,7 +16,12 @@ O usuário confirmou os dois sentidos de integração (cliente e motor). O perfi
   2. `186a0de` `fix(storage): retry busy WAL setup during concurrent first init`
   3. `7fbb03c` `docs: record handoff round and verification evidence`
   4. `32d993e` `ci: lint undefined references with eslint no-undef`
-  5. commit de documentação com o Compose local e a estabilidade da suíte (veja `git log`).
+  5. `514a0b2` `docs: record lint gate, suite stability and local Compose QA`
+  6. `1fb674a` `fix(runtime): verify process identity before trusting a PID (RT-10)`
+  7. `0650bc6` `test: add reproducible local Compose smoke for the two-service preview`
+  8. `3397a43` `fix(web): make workspace pattern valid under the HTML v flag`
+  9. `0cca729` `test: add down mode to the Compose smoke`
+  10. commit de documentação desta rodada (veja `git log`).
 - Worktree original: `C:\Users\Diego\Documents\ChatGPT\OMP-Orchestrator`, branch `codex/omp-five-phases`, HEAD `75cf897`. Continua suja e **não foi alterada**:
   - modificados: `mcp/jobs.mjs` e `test/http.test.mjs`. É a mesma correção de `listJobs`, agora coberta por `2c4d818`;
   - não rastreados: `docs/audit-2026-09-25/`, capturas `docs/console-*.png`, `docs/PROMPT-AGENT-EXTERNAL.md` e a versão anterior deste handoff.
@@ -25,12 +30,15 @@ O usuário confirmou os dois sentidos de integração (cliente e motor). O perfi
   - suíte em laço: 20/20 no Linux (imagem) e 10/10 no Windows;
   - teste de inicialização concorrente: 25/25 no Linux, contra 4/12 antes da correção;
   - `npm run lint` limpo;
-  - Compose de dois serviços em loopback: autenticação, job fake no sidecar, idempotência, reinício, backup/restore com artifact em volume novo, reinício do sidecar com job em execução (7/7 `interrupted`, sem replay) e abort.
-- Não validado: console no browser, prompt OMP real, VPS, TLS e CI remoto (sem push).
-- RT-10 continua aberto. A reconciliação usa só o PID, e foi observado reuso de PID no container reiniciado. Veja a correção sugerida em `IMPLEMENTATION-5-PHASES.md`.
+  - Compose de dois serviços em loopback: autenticação, `Origin` estranho recusado, job fake no sidecar, idempotência, reinício, backup/restore com artifact em volume novo, reinício do sidecar com job em execução (`interrupted`, sem replay) e abort. Reproduzível com `test/compose/smoke.sh`;
+  - RT-10 corrigido (`1fb674a`): identidade de processo no Linux. Os testes de reuso de PID falham com o código antigo e passam com o novo;
+  - console web no browser contra o Compose: token errado recusado, conexão, criação de agent job pela UI até `succeeded` com eventos, inspeção de run, ferramenta pelo formulário, argumentos inválidos → 400, desconexão sem token persistido. Corrigido o `pattern` inválido do workspace (`3397a43`);
+  - HEAD `0cca729`: Windows 101 testes (96 passaram, 5 específicos de Linux); imagem Linux 101/101 em 5 execuções.
+- Não validado: prompt OMP real, VPS, TLS e CI remoto (sem push). No browser, o `window.confirm()` foi simulado (o painel descarta diálogos). A visualização de artifact de run na UI não foi exercitada, porque o seed sintético não lista artifacts no payload da run.
 - Pode haver um servidor de QA local em `127.0.0.1:18080`, iniciado em sessão interativa anterior. Não foi verificado nem encerrado.
 - Ao iniciar o WSL, containers `openbots-*` de outro projeto subiram por política de restart. Eles não pertencem a este repositório e não foram tocados.
-- Tags Docker locais criadas: `omp-orchestrator:handoff-2c4d818`, `:handoff-wip`, `:handoff-7fbb03c` e `:handoff-compose`. Podem ser removidas quando não forem mais úteis. A tag `omp-orchestrator:local` da worktree original não foi sobrescrita, porque o QA usou override de imagem e projeto Compose próprios.
+- `.impeccable/hook.cache.json` na worktree de continuação é cache de um hook de design do editor. Não é do projeto e não foi commitado.
+- Tags Docker locais criadas: `omp-orchestrator:handoff-2c4d818`, `:handoff-wip`, `:handoff-7fbb03c`, `:handoff-compose`, `:handoff-rt10`, `:handoff-rt10-neg`, `:handoff-0cca729` e `:smoke`. Podem ser removidas quando não forem mais úteis. A tag `omp-orchestrator:local` da worktree original não foi sobrescrita, porque o QA usou override de imagem e projeto Compose próprios.
 - Nada foi publicado, enviado ao remoto, implantado ou cobrado. Não crie PR nem faça push sem autorização específica.
 
 ## Proteção de estado
@@ -47,17 +55,19 @@ Não implemente na worktree original. Continue em `codex/omp-handoff` ou crie ou
 6. Tokens e credenciais nunca vão em argumentos, logs, imagens ou arquivos versionados. O token HTTP não chega ao container worker.
 7. Evidência sintética não prova acesso a provider, quota, VPS pública ou TLS.
 8. (Nova) Retentativa em `SQLITE_BUSY` fica restrita à inicialização do banco (`getDatabase`). Operações normais dependem de `busy_timeout` e transações `BEGIN IMMEDIATE`. Não generalize retentativas para writes de domínio sem analisar a idempotência.
+9. (Nova) Todo ponto que grava `workerPid` grava também `workerIdentity` (`workerProcess(pid)`), e toda decisão de vida ou envio de sinal usa `processAlive`/`processReused` de `mcp/process-identity.mjs`. Não use `process.kill(pid, 0)` isolado. Um PID reaproveitado, ou o grupo dele, nunca recebe SIGTERM. Sem identidade (Windows ou registros antigos), o comportamento continua só por PID.
 
 ## Como continuar
 
 1. Leia este handoff, `docs/IMPLEMENTATION-5-PHASES.md`, a auditoria (worktree original) e `docs/DEPLOY-VPS.md`. Não há `AGENTS.md` no repositório.
 2. Resultado anterior de "passou uma vez" não prova estabilidade em testes de concorrência. Repita testes de concorrência no Linux (imagem) antes de declará-los estáveis.
-3. Próximos passos sem credencial/deploy:
-   - RT-10: identidade de processo (PID + `starttime`/`boot_id` no Linux) na reconciliação do supervisor e do recovery, com teste que simule PID reaproveitado;
-   - QA do console web no browser contra o Compose local;
-   - rodar os roteiros de QA do Compose como script versionado (hoje ficam fora do repositório; os passos estão descritos em `IMPLEMENTATION-5-PHASES.md`).
-4. Gates que exigem autorização explícita: prompt OMP real com limite aprovado, VPS e TLS reais, isolamento para workloads não confiáveis.
-5. Faça commits pequenos e convencionais, e atualize este arquivo e `IMPLEMENTATION-5-PHASES.md` a cada rodada.
+3. Para validar o stack local: `test/compose/smoke.sh` (Linux/WSL com Docker Compose v2). Use `KEEP=1` para deixar o ambiente de pé e `PROJECT=… test/compose/smoke.sh down` para remover.
+4. Próximos passos sem credencial/deploy:
+   - executar `test/compose/smoke.sh` no job `image` do CI;
+   - identidade de processo no Windows (hoje só PID), se a instalação Windows for suportada para agentes de longa duração;
+   - teste de UI para visualização de artifact de run, com uma run que liste artifacts no payload.
+5. Gates que exigem autorização explícita: prompt OMP real com limite aprovado, VPS e TLS reais, isolamento para workloads não confiáveis.
+6. Faça commits pequenos e convencionais, e atualize este arquivo e `IMPLEMENTATION-5-PHASES.md` a cada rodada.
 
 ## Critérios de continuidade e saída
 

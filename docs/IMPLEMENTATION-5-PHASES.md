@@ -111,7 +111,7 @@ Checks do Compose:
 
 Projetos, volumes e arquivos de QA foram removidos ao final. Ficam só as tags locais `omp-orchestrator:handoff-7fbb03c` e `omp-orchestrator:handoff-compose`.
 
-**Risco residual observado (RT-10, P2, aberto):**
+**Risco residual observado (RT-10, P2), corrigido depois em `1fb674a`:**
 
 - A reconciliação do supervisor identifica o worker só pelo PID (`pidAlive`).
 - Na medição, o worker antigo tinha PID 14, e o PID 14 voltou a existir no container reiniciado segundos depois (processos de `docker exec`).
@@ -120,3 +120,69 @@ Projetos, volumes e arquivos de QA foram removidos ao final. Ficam só as tags l
 - Correção sugerida: gravar a identidade do processo junto do PID, com `starttime` de `/proc/<pid>/stat` e o `boot_id` no Linux, e tratar divergência como processo morto. No Windows, manter o fallback atual. Não implementado nesta rodada.
 
 **Continua não validado:** console no browser, prompt OMP real, VPS/TLS e CI remoto.
+
+### `1fb674a` — fix(runtime): identidade de processo (RT-10)
+
+- **Problema:** vida de processo e envio de sinal usavam só `process.kill(pid, 0)`. No container reiniciado, o novo worker recebeu o mesmo PID 14 do anterior em todas as rodadas medidas. Com isso, um registro antigo podia:
+  - manter um job `running` indefinidamente, se o PID estivesse ocupado no momento da reconciliação;
+  - fazer `cancelRun` enviar SIGTERM ao grupo de um processo alheio. Ele sinalizava sem checagem nenhuma.
+- **Contrato:** `mcp/process-identity.mjs`.
+  - `processIdentity(pid)`: no Linux, `linux:<boot_id>:<pid>:<starttime>`, com `starttime` de `/proc/<pid>/stat` (campo 22, lido após o último `)`). Nas outras plataformas, `null`.
+  - `workerProcess(pid)`: `{ workerPid, workerIdentity }`, gravado em todo ponto que antes gravava `workerPid`: workers de job, de agente e de run, supervisor, spawn local e broker/gateway do runtime OMP (`brokerIdentity`/`gatewayIdentity` no arquivo de estado).
+  - `processAlive(pid, identity)`: PID existe e, se houver identidade para o mesmo PID, ela confere. Identidade de outro PID é ignorada, e `/proc` ilegível não é tomado como prova de reuso.
+  - `processReused(pid, identity)`: PID existe e a identidade diverge.
+- **Aplicação:**
+  - reconciliação e despacho do supervisor, recovery de startup (jobs, runs e vínculo nó→job) e `cancelJob` usam `processAlive`;
+  - `cancelRun` pula o sinal só quando `processReused`. Um líder morto ainda é sinalizado por grupo para parar filhos órfãos, e o Linux não reaproveita um PID enquanto o grupo dele existe;
+  - `stopRuntime` e `runtimeStatus` usam a identidade gravada.
+- **Compatibilidade:** sem migração de schema. A identidade fica no payload JSON e os DTOs públicos são listas explícitas, então ela não é exposta. Registros antigos e Windows mantêm o comportamento só por PID.
+- **Testes:** `test/process-identity.test.mjs`.
+  - Em todas as plataformas: fallback e processo encerrado.
+  - Só no Linux: identidade forjada com o mesmo PID vivo e `starttime` diferente. Supervisor e recovery devem interromper job e run e desvincular o nó.
+  - **Prova negativa:** com `agent-supervisor.mjs` e `recovery.mjs` antigos (stash temporário), os dois testes de reconciliação falham. Com a correção, passam.
+
+### `0650bc6`, `0cca729` — test: smoke do Compose versionado
+
+`test/compose/smoke.sh` consolida os roteiros ad hoc da rodada anterior.
+
+- **Caminho e isolamento:** caminho relativo ao repositório, projeto/porta/imagem parametrizáveis, token descartável passado ao `curl` por arquivo de header e remoção automática ao final.
+- **Modos:** `KEEP=1` deixa o ambiente de pé; o argumento `down` remove.
+- **Novo check:** `Origin` estranho → 403.
+- **Arquivos:** `.gitattributes` fixa `*.sh` em LF. O script fica em `test/`, fora do `files` do pacote e fora do padrão de `node --test`.
+
+### QA do console web no browser e `3397a43` — fix(web)
+
+Ambiente: browser do app desktop contra `http://127.0.0.1:18180` (Compose com `KEEP=1`).
+
+| Verificação | Resultado |
+|---|---|
+| token errado | `Authentication required.` |
+| token de teste | conecta; mostra a run sintética, os agentes do smoke e 37 ferramentas |
+| criar agent job pelo formulário (`fake-command`) | `queued` → `succeeded`, inspetor com eventos, uso e output `received:hello-from-console` |
+| inspecionar run | payload como texto, sem `iframe` |
+| `omp_storage_status` pelo formulário de ferramentas | WAL, schema 2 |
+| argumentos inválidos | 400 `Invalid tool arguments.` |
+| Desconectar e recarregar | token limpo; `localStorage`, `sessionStorage` e cookies vazios; volta desconectado |
+
+- **Defeito encontrado:** o console acusou `Pattern attribute value [A-Za-z0-9][A-Za-z0-9._-]* is not a valid regular expression`. Browsers compilam `pattern` com o flag `v`, em que `-` sem escape no fim de uma classe é erro. A validação do lado do cliente era descartada em silêncio; o servidor continuava recusando nomes inseguros.
+- **Correção:** hífen escapado.
+- **Teste:** `test/web.test.mjs` compila todo `pattern` com `v` e compara a regra do workspace com a regex do servidor (`agent-jobs.mjs:65`). Falha sem a correção.
+- **Confirmação no browser após rebuild:** `-bad`, `a/b` e `..` são inválidos, e `browser-qa` é válido.
+- "Jobs recentes 0" com agentes presentes é intencional: o console separa `inferenceJobs` dos agentes (`web/app.js:103`).
+
+**Limitações do QA de browser:**
+
+- O painel descarta `window.confirm()`, cujo retorno é `false`. Isso confirmou que a negação não cria job. Para o fluxo aceito, o `confirm` foi substituído por um stub de teste só naquela aba.
+- A visualização de artifact de run não foi exercitada, porque o seed sintético grava `run_artifacts` sem listar o artifact no payload da run.
+- O hook de design do editor apontou os marcadores numerados de seção ("01 / EXECUÇÕES"). É design existente, fora do escopo, e não foi alterado.
+
+### Verificações no HEAD `0cca729`
+
+| Comando/ambiente | Resultado |
+|---|---|
+| `npm run lint` | limpo |
+| `npm test`, Windows | 101 testes: 96 passaram, 5 omitidos (Linux) |
+| imagem Linux `handoff-0cca729`, `npm test` | 101/101 em 5 execuções |
+| `test/compose/smoke.sh` com RT-10 | todos os checks; reinício do sidecar com job rodando → `interrupted`, com o PID 14 reaproveitado a cada rodada |
+
+Não validado: prompt OMP real, VPS/TLS, CI remoto e identidade de processo no Windows.
