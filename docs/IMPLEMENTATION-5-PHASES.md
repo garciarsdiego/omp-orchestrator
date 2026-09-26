@@ -306,7 +306,7 @@ Execuções reais pelo Orchestrator (`omp_agent_create` via CLI, workspace vazio
 
 ### 11. Rodada autorizada (26/09/2026) — relatório de backends + testes de UI + Cursor inclusivo
 
-Commits: `8b4a54a` (produto+README) e `3d3cdb1` (testes de UI/HTTP).
+Commits: `8b4a54a` (produto+README), `3d3cdb1` (testes de UI/HTTP) e `35be67b` (docs).
 
 - `omp_agent_backends` agora declara, por backend, `usageReported`, `usageSemantics`, `usageIncludes`, `cacheBehavior`, `promptDelivery` e `usageUnknownAs` (sempre omitido, nunca zero), além das capacidades antigas (`steer`, `abort`, `sessionEvents`, `tokenLimitEnforced: false`, `providerCostKnown: false`).
 - `omp-rpc` declara `omp-message-end` (frames `message_end` do assistente, deduplicados por `messageId`; `aborted`/`error` com uso zerado contam como não reportados).
@@ -319,5 +319,5 @@ Commits: `8b4a54a` (produto+README) e `3d3cdb1` (testes de UI/HTTP).
   - `test/agent-jobs.test.mjs`: o relatório declara semântica de uso/cache sem implicar custo ou limite de tokens.
   - `test/web.test.mjs`: o console mostra artefato como texto (sem `innerHTML`) e rotula backends sem uso.
   - `test/http-auth.test.mjs`: `/api/overview`, `/api/metrics` e `/metrics` exigem token nomeado, nunca ecoam o token e retornam `{ runs, jobs, agents }` com os três arrays.
-- **Verificações desta rodada:** `npm run lint` limpo no Windows; suíte Windows 114 passaram + 2 omitidos (Linux); imagem Linux `omp-orchestrator:check` com o código atual: `npm test` 116/116; `test/compose/smoke.sh` passou uma vez (`SMOKE OK`) na imagem anterior à correção do Cursor e falhou na segunda tentativa por resíduo de projeto/500 no `readyz` (projeto `omp-smoke-check`, causa não isolada); sem migração, então `upgrade-rollback.sh` não se aplica.
+- **Verificações desta rodada:** `npm run lint` limpo no Windows; suíte Windows 114 passaram + 2 omitidos (Linux); imagem Linux `omp-orchestrator:push` com o código final: `npm test` 116/116; `test/compose/smoke.sh` em projeto limpo `omp-smoke-push` com `SMOKE OK` (todos os PASS, incluindo job fake no sidecar, restart, 3 rounds de sidecar-restart, abort e backup/restore); sem migração, então `upgrade-rollback.sh` não se aplica.
 - **Não validado nesta rodada:** vendor do Cursor; motor real dentro do container Linux; VPS/TLS; isolamento para workloads não confiáveis; browser real do console.
