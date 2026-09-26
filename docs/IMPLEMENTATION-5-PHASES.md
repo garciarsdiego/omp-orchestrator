@@ -299,7 +299,25 @@ Execuções reais pelo Orchestrator (`omp_agent_create` via CLI, workspace vazio
 | Codex (codex-cli 0.155.1) | `succeeded`, `ENGINE-CODEX-OK` | 6 s | 21.748 tokens |
 | Claude Code (2.1.280) | `succeeded`, `ENGINE-CLAUDE-OK` | 5 s | 46.109 tokens, `claude-sonnet-5`, equivalente US$ 0,0940 |
 | Droid (0.209.1) | `succeeded`, `ENGINE-DROID-OK` | 12 s | 9.960 tokens |
-| Cursor (cursor-agent 2026.09.26) | `succeeded`, `ENGINE-CURSOR-OK` | 25 s | 23.559 tokens (normalização de cache presumida) |
+| Cursor (cursor-agent 2026.09.26) | `succeeded`, `ENGINE-CURSOR-OK` | 25 s | 23.559 tokens na soma antiga com duplo cache; com a partição inclusiva da rodada atual seriam 20.000 + 3.559 aprox. (vendor continua silencioso; ver item 11) |
 | Grok (1.0.41) | `succeeded`, `ENGINE-GROK-OK` | 7 s | 28.879 tokens, `grok-4.7-build-fast`, equivalente US$ 0,0376 |
 | Devin (3000.1.27) | `succeeded`, `ENGINE-DEVIN-OK` | 8 s | desconhecido (saída só texto) |
 | Muse (1.3.0) | `succeeded`, `ENGINE-MUSE-OK` | 35 s | desconhecido (não reportado) |
+
+### 11. Rodada autorizada (26/09/2026) — relatório de backends + testes de UI + Cursor inclusivo
+
+Commits: `8b4a54a` (produto+README) e `3d3cdb1` (testes de UI/HTTP).
+
+- `omp_agent_backends` agora declara, por backend, `usageReported`, `usageSemantics`, `usageIncludes`, `cacheBehavior`, `promptDelivery` e `usageUnknownAs` (sempre omitido, nunca zero), além das capacidades antigas (`steer`, `abort`, `sessionEvents`, `tokenLimitEnforced: false`, `providerCostKnown: false`).
+- `omp-rpc` declara `omp-message-end` (frames `message_end` do assistente, deduplicados por `messageId`; `aborted`/`error` com uso zerado contam como não reportados).
+- `command-json` sem adaptador declara `operator-command-json` (só o que o comando do operador reportar é gravado).
+- Quando os args usam `scripts/agent-cli-adapter.mjs <perfil>`, o relatório expõe `profile`, o `adapter` e os fatos do perfil em `mcp/backends/cli-profiles.mjs` (`cliCapabilities()`).
+- **Cursor (gate 3, resolvido como inclusivo-particionado, vendor silencioso):** pesquisa em 26/09/2026 não achou definição de cache na doc oficial (`cursor.com/docs/cli/reference/output-format.md` nem sequer documenta o bloco `usage`; o fórum confirma que `-p --output-format json` é o único lugar que reporta uso). Evidência independente: `pi-cursor-sdk@0.1.62` (`cursor-usage-accounting.ts`) observa `turn-ended.usage` raw local e afirma `inputTokens is the full prompt; cache fields partition it`, com `uncached = inputTokens - cacheReadTokens - cacheWriteTokens`, `total = inputTokens + outputTokens` e aviso explícito para não usar o `toTokenUsage` do SDK oficial (que somaria os quatro). O parser agora implementa isso: `input_tokens = inputTokens`, `cached_tokens = min(cacheRead+cacheWrite, inputTokens)`, `total_tokens = inputTokens + outputTokens`, sem duplo cache; sem `usage` continua `null`. Semântica nova: `cursor-inclusive-cache-partition`. O número real antigo do Cursor (23.559) usava a soma exclusiva e contava cache duas vezes; não foi reexecutado com quota nesta rodada.
+- Console: o seletor de motor mostra `id · tipo · perfil` e marca `· sem uso` quando `usageReported` é falso; o `title` carrega o `cacheBehavior`. A inspeção de run continua lendo `omp_run_get` + `omp_run_artifact` e exibindo o corpo como texto (`textContent`, sem `innerHTML`).
+- **Testes novos (todos fake/sintéticos, sem quota):**
+  - `test/agent-cli.test.mjs`: Cursor com partição inclusiva (fixture 20+5+0+3 vira 20/5/3/23, sem duplo cache; clamp e `null` sem usage); todo perfil declara semântica/cache/unknown com "never zero".
+  - `test/agent-jobs.test.mjs`: o relatório declara semântica de uso/cache sem implicar custo ou limite de tokens.
+  - `test/web.test.mjs`: o console mostra artefato como texto (sem `innerHTML`) e rotula backends sem uso.
+  - `test/http-auth.test.mjs`: `/api/overview`, `/api/metrics` e `/metrics` exigem token nomeado, nunca ecoam o token e retornam `{ runs, jobs, agents }` com os três arrays.
+- **Verificações desta rodada:** `npm run lint` limpo no Windows; suíte Windows 114 passaram + 2 omitidos (Linux); imagem Linux `omp-orchestrator:check` com o código atual: `npm test` 116/116; `test/compose/smoke.sh` passou uma vez (`SMOKE OK`) na imagem anterior à correção do Cursor e falhou na segunda tentativa por resíduo de projeto/500 no `readyz` (projeto `omp-smoke-check`, causa não isolada); sem migração, então `upgrade-rollback.sh` não se aplica.
+- **Não validado nesta rodada:** vendor do Cursor; motor real dentro do container Linux; VPS/TLS; isolamento para workloads não confiáveis; browser real do console.

@@ -62,8 +62,13 @@ Não estão autorizados:
 - **Não validado:**
   - VPS e TLS reais;
   - motores reais dentro do container Linux, porque os testes reais rodaram no Windows local, onde estão os logins;
-  - o console depois das mudanças de token e métricas;
-  - a semântica de cache do Cursor (normalização presumida).
+  - o console depois das mudanças de token e métricas (há agora testes de UI que cobrem o seletor de motor e a inspeção de artefato como texto, mas sem browser real nesta rodada);
+  - a semântica de cache do Cursor: resolvida como `cursor-inclusive-cache-partition` por observação independente (`pi-cursor-sdk`), com vendor silencioso; o número real antigo usava soma com duplo cache.
+- **Trabalho desta sessão (26/09/2026, commits `8b4a54a` + `3d3cdb1`, ainda não enviado):**
+  - `omp_agent_backends` declara `usageReported`/`usageSemantics`/`usageIncludes`/`cacheBehavior`/`promptDelivery`/`usageUnknownAs` por backend (detalhes em `IMPLEMENTATION-5-PHASES.md`, item 11);
+  - testes novos em `test/agent-cli.test.mjs`, `test/agent-jobs.test.mjs`, `test/web.test.mjs` e `test/http-auth.test.mjs` (overview/métricas com token nomeado);
+  - verificado: `npm run lint` limpo no Windows; suíte Windows 114 + 2 omitidos; imagem Linux `omp-orchestrator:check` com `npm test` 116/116; `test/compose/smoke.sh` com `SMOKE OK` uma vez e uma falha posterior por resíduo de projeto (não isolada);
+  - **pendente antes de push/merge:** repetir `test/compose/smoke.sh` em projeto limpo e registrar o resultado.
 - **Ambiente local:**
   - o estado dos testes reais fica em `%TEMP%\omp-real`, com o catálogo `engines.json` (só caminhos e nomes de variáveis) e estados SQLite com as saídas triviais;
   - ao iniciar o WSL, containers `openbots-*` de outro projeto sobem sozinhos; não foram tocados;
