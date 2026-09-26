@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0-preview.1 — Unreleased
+
+- Added a shared tool catalog served through MCP stdio, authenticated HTTP, and a JSON CLI.
+- Added OMP RPC agent jobs with session events, steer and abort, plus administrator-configured headless CLI backends.
+- Added a browser operations console and a pinned Linux/VPS image, Compose recipe, and online SQLite backup.
+- Bundled the pinned OMP release's MIT license and third-party notices alongside its binary.
+- Repaired concurrent state updates, migration startup, run budgets, retry accounting, provider selection, and exact-artifact review.
+- Split HTTP and agent execution into separate Compose containers so agent processes cannot mount the HTTP access token. Shared state and OMP credentials remain within one trusted team boundary.
+- Verified Windows tests (92 pass, two Linux-only skips), Linux image tests (94 pass), local Compose health/authentication, fake jobs across both containers, SQLite+CAS restore, and OMP 18.3.0/18.3.2 metadata-only RPC handshakes. Real provider execution and VPS/TLS remain unverified.
+
 ## 0.7.0 — Unreleased
 
 ### Added

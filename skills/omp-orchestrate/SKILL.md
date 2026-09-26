@@ -16,8 +16,8 @@ Keep Codex responsible for scope, decomposition, integration, and the final answ
 7. Call `omp_run_estimate` before requesting approval. Report base and contingency tokens and USD-equivalent range.
 8. Start the authenticated runtime only after confirmation, then call `omp_run_create` with `confirmBudget=true` and `confirmQuota=true`.
 9. Follow progress through `omp_run_get` and `omp_run_events`; do not recreate a run because a node is slow.
-10. When status becomes `awaiting_codex`, inspect the artifact and deterministic validation evidence.
-11. Call `omp_run_attest` with `accept`, `revise`, or `reject`. A revision requires renewed quota confirmation.
+10. When status becomes `awaiting_review` (or legacy `awaiting_codex`), inspect the artifact and deterministic validation evidence.
+11. Call `omp_run_attest` with `accept`, `revise`, or `reject` and the inspected artifact's exact `expectedArtifactSha256`. A revision requires renewed quota confirmation.
 12. Use `omp_run_resume` only for failed or budget-exceeded runs; checkpoints prevent successful nodes from repeating.
 13. Use low-level `omp_job_*` only when no pipeline template fits.
 14. Treat contract validity as shape evidence, not substantive correctness.

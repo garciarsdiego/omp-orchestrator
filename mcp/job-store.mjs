@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { getDatabase, STATE_ROOT } from "./storage.mjs";
+import { getDatabase, STATE_ROOT, withImmediateTransaction } from "./storage.mjs";
 import { loadPricingRegistry } from "./pricing.mjs";
 
 export const JOB_ROOT = process.env.OMP_ORCHESTRATOR_DATA_DIR
@@ -30,18 +30,16 @@ export function readJob(id, root = JOB_ROOT) {
   return JSON.parse(row.payload);
 }
 
-export function writeJob(job, root = JOB_ROOT) {
+function writeJobRecord(db, job, root = JOB_ROOT) {
   assertJobId(job.id);
-  const db = getDatabase();
   const payload = JSON.stringify(job);
-  db.transaction(() => {
-    db.prepare(`
+  db.prepare(`
       INSERT INTO jobs(id, scope, status, attempt, created_at, updated_at, worker_pid, payload)
       VALUES (@id, @scope, @status, @attempt, @createdAt, @updatedAt, @workerPid, @payload)
       ON CONFLICT(id) DO UPDATE SET
         scope=excluded.scope, status=excluded.status, attempt=excluded.attempt,
         updated_at=excluded.updated_at, worker_pid=excluded.worker_pid, payload=excluded.payload
-    `).run({
+  `).run({
       id: job.id,
       scope: scopeFor(root),
       status: job.status,
@@ -50,32 +48,43 @@ export function writeJob(job, root = JOB_ROOT) {
       updatedAt: job.updatedAt,
       workerPid: job.workerPid || null,
       payload
-    });
-    db.prepare(`
+  });
+  db.prepare(`
       INSERT INTO job_attempts(job_id, attempt, status, selector, started_at, completed_at, usage_json, error_json)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(job_id, attempt) DO UPDATE SET
         status=excluded.status, selector=excluded.selector, started_at=excluded.started_at,
         completed_at=excluded.completed_at, usage_json=excluded.usage_json, error_json=excluded.error_json
-    `).run(
-      job.id,
-      job.attempt,
-      job.status,
-      job.request?.selector || null,
-      job.startedAt || null,
-      job.completedAt || null,
-      job.usage ? JSON.stringify(job.usage) : null,
-      job.error ? JSON.stringify(job.error) : null
-    );
-  })();
+  `).run(
+    job.id,
+    job.attempt,
+    job.status,
+    job.request?.selector || null,
+    job.startedAt || null,
+    job.completedAt || null,
+    job.usage ? JSON.stringify(job.usage) : null,
+    job.error ? JSON.stringify(job.error) : null
+  );
+}
+
+export function writeJob(job, root = JOB_ROOT) {
+  const db = getDatabase();
+  db.transaction(() => writeJobRecord(db, job, root))();
   return job;
 }
 
 export function updateJob(id, mutate, root = JOB_ROOT) {
-  const job = readJob(id, root);
-  const updated = mutate(job) || job;
-  updated.updatedAt = new Date().toISOString();
-  return writeJob(updated, root);
+  assertJobId(id);
+  return withImmediateTransaction(() => {
+    const db = getDatabase();
+    const row = db.prepare("SELECT payload FROM jobs WHERE id = ? AND scope = ?").get(id, scopeFor(root));
+    if (!row) throw new Error(`Job not found: ${id}`);
+    const job = JSON.parse(row.payload);
+    const updated = mutate(job) || job;
+    updated.updatedAt = new Date().toISOString();
+    writeJobRecord(db, updated, root);
+    return updated;
+  });
 }
 
 export function listJobs(limit = 25, root = JOB_ROOT) {
@@ -111,10 +120,9 @@ export function getJobConsumptionSummary(id) {
   return row || { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, equivalentHighUsd: 0 };
 }
 
-export function recordConsumptionEvent(job, cost) {
+function recordConsumptionEventRecord(db, job, cost) {
   if (!job.usage) return;
   const pricing = cost?.pricing || {};
-  const db = getDatabase();
   if (pricing.registryDigest) {
     const registry = loadPricingRegistry();
     db.prepare(`
@@ -160,8 +168,13 @@ export function recordConsumptionEvent(job, cost) {
   );
 }
 
-export function recordPolicyEvents(job, breaches, mode) {
-  const insert = getDatabase().prepare(`
+export function recordConsumptionEvent(job, cost) {
+  const db = getDatabase();
+  db.transaction(() => recordConsumptionEventRecord(db, job, cost))();
+}
+
+function recordPolicyEventsRecord(db, job, breaches, mode) {
+  const insert = db.prepare(`
     INSERT INTO policy_events(
       at, run_id, job_id, attempt, scope, limit_name, threshold_value,
       observed_value, mode, action_taken, payload
@@ -182,6 +195,27 @@ export function recordPolicyEvents(job, breaches, mode) {
       JSON.stringify(breach)
     );
   }
+}
+
+export function recordPolicyEvents(job, breaches, mode) {
+  const db = getDatabase();
+  db.transaction(() => recordPolicyEventsRecord(db, job, breaches, mode))();
+}
+
+export function finalizeJobWithLedger(id, mutate, { cost = null, breaches = [], mode } = {}, root = JOB_ROOT) {
+  assertJobId(id);
+  return withImmediateTransaction(() => {
+    const db = getDatabase();
+    const row = db.prepare("SELECT payload FROM jobs WHERE id = ? AND scope = ?").get(id, scopeFor(root));
+    if (!row) throw new Error(`Job not found: ${id}`);
+    const job = JSON.parse(row.payload);
+    const updated = mutate(job) || job;
+    updated.updatedAt = new Date().toISOString();
+    writeJobRecord(db, updated, root);
+    recordConsumptionEventRecord(db, updated, cost);
+    recordPolicyEventsRecord(db, updated, breaches, mode || updated.budget?.costPolicy || "observe");
+    return updated;
+  });
 }
 
 export function publicJob(job, { includeOutput = false } = {}) {

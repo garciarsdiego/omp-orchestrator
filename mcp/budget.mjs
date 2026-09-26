@@ -13,13 +13,20 @@ export function normalizeJobBudget({
   budget = {}
 } = {}) {
   const inputEstimate = estimatePromptTokens(prompt);
-  const maxRetries = Math.max(0, Number(budget.maxRetries ?? 1));
+  const numeric = (value, fallback, name) => {
+    const resolved = value ?? fallback;
+    if (!Number.isFinite(Number(resolved))) throw new Error(`${name} must be a finite number.`);
+    return Number(resolved);
+  };
+  const maxRetries = Math.max(0, numeric(budget.maxRetries, 1, "maxRetries"));
   const normalized = {
-    maxCalls: Math.max(1, Number(budget.maxCalls) || maxRetries + 1),
-    maxInputTokens: Math.max(1, Number(budget.maxInputTokens) || Math.max(inputEstimate, 128_000)),
-    maxOutputTokens: Math.max(1, Number(budget.maxOutputTokens) || maxOutputTokens),
-    maxTotalTokens: Math.max(1, Number(budget.maxTotalTokens) || Math.max(inputEstimate + maxOutputTokens, 192_000)),
-    maxDurationMs: Math.max(10_000, Number(budget.maxDurationMs) || timeoutMs),
+    // Zero is meaningful when retrying against a remaining run/job envelope.
+    // Keep it here so estimate validation can reject it instead of restoring a default.
+    maxCalls: Math.max(0, numeric(budget.maxCalls, maxRetries + 1, "maxCalls")),
+    maxInputTokens: Math.max(0, numeric(budget.maxInputTokens, Math.max(inputEstimate, 128_000), "maxInputTokens")),
+    maxOutputTokens: Math.max(0, numeric(budget.maxOutputTokens, maxOutputTokens, "maxOutputTokens")),
+    maxTotalTokens: Math.max(0, numeric(budget.maxTotalTokens, Math.max(inputEstimate + maxOutputTokens, 192_000), "maxTotalTokens")),
+    maxDurationMs: Math.max(0, numeric(budget.maxDurationMs, timeoutMs, "maxDurationMs")),
     maxRetries,
     costPolicy: budget.costPolicy || "observe",
     maxApiEquivalentUsd: budget.maxApiEquivalentUsd ?? null
@@ -72,14 +79,19 @@ export function assertJobEstimate(estimate) {
 }
 
 export function evaluateActualUsage({ budget, usage, prior = {}, cost, durationMs = 0 } = {}) {
+  const usageKnown = usage
+    && Number.isFinite(Number(usage.input_tokens))
+    && Number.isFinite(Number(usage.output_tokens))
+    && Number.isFinite(Number(usage.total_tokens));
+  const costKnown = cost && Number.isFinite(Number(cost.highUsd));
   const aggregate = {
     calls: (prior.calls || 0) + 1,
-    inputTokens: (prior.inputTokens || 0) + (usage?.input_tokens || 0),
-    outputTokens: (prior.outputTokens || 0) + (usage?.output_tokens || 0),
-    totalTokens: (prior.totalTokens || 0) + (usage?.total_tokens || 0),
-    equivalentHighUsd: prior.equivalentHighUsd === null || cost?.highUsd === null
+    inputTokens: (prior.inputTokens || 0) + (usageKnown ? usage.input_tokens : 0),
+    outputTokens: (prior.outputTokens || 0) + (usageKnown ? usage.output_tokens : 0),
+    totalTokens: (prior.totalTokens || 0) + (usageKnown ? usage.total_tokens : 0),
+    equivalentHighUsd: prior.equivalentHighUsd === null || !costKnown
       ? null
-      : (prior.equivalentHighUsd || 0) + (cost?.highUsd || 0)
+      : (prior.equivalentHighUsd || 0) + cost.highUsd
   };
   const breaches = [];
   if (aggregate.calls > budget.maxCalls) breaches.push({ limit: "maxCalls", threshold: budget.maxCalls, observed: aggregate.calls, enforced: true });
@@ -107,10 +119,10 @@ export function evaluateActualUsage({ budget, usage, prior = {}, cost, durationM
   }
   if (
     budget.costPolicy === "enforce"
-    && (aggregate.equivalentHighUsd === null || aggregate.equivalentHighUsd > budget.maxApiEquivalentUsd)
+    && (!usageKnown || aggregate.equivalentHighUsd === null || aggregate.equivalentHighUsd > budget.maxApiEquivalentUsd)
   ) {
     breaches.push({
-      limit: aggregate.equivalentHighUsd === null ? "priceUnknown" : "maxApiEquivalentUsd",
+      limit: !usageKnown || aggregate.equivalentHighUsd === null ? "priceUnknown" : "maxApiEquivalentUsd",
       threshold: budget.maxApiEquivalentUsd,
       observed: aggregate.equivalentHighUsd,
       enforced: true

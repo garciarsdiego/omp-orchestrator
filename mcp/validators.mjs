@@ -5,11 +5,10 @@ export function validateStandaloneHtml(html) {
   const contract = validateOutput(html, "standalone_html");
   const errors = [...contract.errors];
   const warnings = [];
-  const checks = { contract: contract.valid, javascriptSyntax: false, uniqueIds: false, accessibility: false };
+  const checks = { contract: contract.valid, javascriptSyntax: null, uniqueIds: false, accessibility: false };
 
   const scripts = [...String(html).matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
-  if (!scripts.length) errors.push("HTML contains no inline script block.");
-  else {
+  if (scripts.length) {
     const syntax = spawnSync(process.execPath, ["--check", "-"], {
       input: scripts.join("\n"),
       encoding: "utf8",

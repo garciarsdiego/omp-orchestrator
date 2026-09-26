@@ -1,19 +1,30 @@
 {
   "name": "omp-orchestrator",
-  "version": "0.7.0",
+  "version": "0.8.0-preview.1",
   "private": true,
   "description": "Codex plugin for safe orchestration over a local Oh My Pi installation",
   "type": "module",
+  "bin": {
+    "omp-orchestrator": "./bin/omp-orchestrator.mjs"
+  },
+  "files": [
+    "bin/", "mcp/", "web/", "config/", "scripts/", "skills/", ".codex-plugin/", ".mcp.json",
+    "README.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md", "LICENSE", "docs/DEPLOY-VPS.md",
+    "Dockerfile", "compose.yaml", "licenses/"
+  ],
   "scripts": {
     "test": "node --test",
     "smoke": "node scripts/smoke.mjs",
-    "migrate:json": "node scripts/migrate-json.mjs"
+    "migrate:json": "node scripts/migrate-json.mjs",
+    "serve": "node bin/omp-orchestrator.mjs serve"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^22.0.0 || ^24.0.0"
   },
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/node": "^2.1.0",
+    "@modelcontextprotocol/server": "^2.1.0",
     "better-sqlite3": "^12.4.1"
   }
 }

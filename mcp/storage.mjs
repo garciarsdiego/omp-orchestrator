@@ -32,7 +32,6 @@ function migrate(db) {
       applied_at TEXT NOT NULL
     );
   `);
-  const applied = new Set(db.prepare("SELECT version FROM schema_migrations").all().map((row) => row.version));
   const migrations = [{
     version: 1,
     name: "durable_state",
@@ -199,9 +198,10 @@ function migrate(db) {
       WHERE ja.usage_json IS NOT NULL;
     `
   }];
-  const pending = migrations.filter((migration) => !applied.has(migration.version));
-  if (applied.size && pending.length && existsSync(DATABASE_PATH)) {
-    const currentVersion = Math.max(...applied);
+  const beforeLock = new Set(db.prepare("SELECT version FROM schema_migrations").all().map((row) => row.version));
+  const pendingBeforeLock = migrations.filter((migration) => !beforeLock.has(migration.version));
+  if (beforeLock.size && pendingBeforeLock.length && existsSync(DATABASE_PATH)) {
+    const currentVersion = Math.max(...beforeLock);
     const backup = `${DATABASE_PATH}.bak-v${currentVersion}`;
     if (!existsSync(backup)) {
       db.pragma("wal_checkpoint(FULL)");
@@ -209,14 +209,35 @@ function migrate(db) {
       restrict(backup, 0o600);
     }
   }
-  for (const migration of migrations) {
-    if (applied.has(migration.version)) continue;
-    db.transaction(() => {
+  runImmediateTransaction(db, () => {
+    const applied = new Set(db.prepare("SELECT version FROM schema_migrations").all().map((row) => row.version));
+    for (const migration of migrations) {
+      if (applied.has(migration.version)) continue;
       db.exec(migration.sql);
       db.prepare("INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)")
         .run(migration.version, migration.name, new Date().toISOString());
-    })();
+    }
+  });
+}
+
+function runImmediateTransaction(db, work) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = work();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw error;
   }
+}
+
+export function withImmediateTransaction(work) {
+  const db = getDatabase();
+  // Operations that coordinate several store updates hold the outer write
+  // transaction. A nested store call uses a SQLite savepoint rather than
+  // starting another BEGIN, preserving one atomic commit.
+  return db.inTransaction ? db.transaction(work)() : runImmediateTransaction(db, work);
 }
 
 export function getDatabase() {
@@ -224,10 +245,10 @@ export function getDatabase() {
   mkdirSync(path.dirname(DATABASE_PATH), { recursive: true, mode: 0o700 });
   restrict(path.dirname(DATABASE_PATH), 0o700);
   database = new Database(DATABASE_PATH, { timeout: 5_000 });
+  database.pragma("busy_timeout = 5000");
   database.pragma("journal_mode = WAL");
   database.pragma("synchronous = NORMAL");
   database.pragma("foreign_keys = ON");
-  database.pragma("busy_timeout = 5000");
   migrate(database);
   restrict(DATABASE_PATH, 0o600);
   return database;

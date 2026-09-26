@@ -1,0 +1,2 @@
+# Preserve upstream license text verbatim; its own formatting includes trailing spaces.
+licenses/OMP-THIRD-PARTY-NOTICES.txt -whitespace

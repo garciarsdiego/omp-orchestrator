@@ -1,0 +1,15 @@
+.git
+.codex
+node_modules
+npm-debug.log*
+coverage
+data
+state
+backups
+secrets
+config/backends.local.json
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.env
+docs/audit-*

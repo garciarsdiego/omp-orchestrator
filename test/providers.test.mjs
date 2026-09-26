@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildProviderReadiness } from "../mcp/providers.mjs";
+import { buildProviderReadiness, catalogProviders } from "../mcp/providers.mjs";
 
 test("provider readiness maps aliases and configured roles without credentials", () => {
   const readiness = buildProviderReadiness([
@@ -37,4 +37,16 @@ test("provider readiness does not truncate providers after 200 catalog entries",
   ]);
   assert.equal(readiness.find((entry) => entry.key === "cursor").ready, true);
   assert.equal(readiness.find((entry) => entry.key === "qwen").ready, true);
+});
+
+test("dynamic catalog discovery includes providers outside the historical ten", () => {
+  const result = catalogProviders([
+    { provider: "custom-local", id: "a" },
+    { provider: "custom-local", id: "b" },
+    { provider: "anthropic", id: "c" }
+  ], { default: "custom-local/a" });
+  assert.deepEqual(result.find((item) => item.id === "custom-local"), {
+    id: "custom-local", modelCount: 2, configuredRoles: ["default"],
+    catalogAvailable: true, operationalStatus: "unknown"
+  });
 });

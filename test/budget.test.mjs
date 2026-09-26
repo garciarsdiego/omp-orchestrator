@@ -67,3 +67,25 @@ test("actual wall-clock duration is a hard post-call limit", () => {
   });
   assert.ok(evaluated.breaches.some((item) => item.limit === "maxDurationMs" && item.enforced));
 });
+
+test("zero remaining limits stay zero instead of restoring defaults", () => {
+  const budget = normalizeJobBudget({
+    prompt: "hello",
+    maxOutputTokens: 100,
+    budget: { maxCalls: 0, maxInputTokens: 0, maxOutputTokens: 0, maxTotalTokens: 0, maxDurationMs: 0 }
+  });
+  assert.deepEqual(
+    [budget.maxCalls, budget.maxInputTokens, budget.maxOutputTokens, budget.maxTotalTokens, budget.maxDurationMs],
+    [0, 0, 0, 0, 0]
+  );
+  assert.equal(estimateJobRequest({ selector: "xai-oauth/grok-4.5", prompt: "hello", maxOutputTokens: 1, budget }).allowed, false);
+});
+
+test("enforce fails closed when a provider omits usage telemetry", () => {
+  const budget = normalizeJobBudget({
+    prompt: "hello", maxOutputTokens: 10,
+    budget: { costPolicy: "enforce", maxApiEquivalentUsd: 1 }
+  });
+  const evaluated = evaluateActualUsage({ budget, usage: null, prior: {}, cost: null });
+  assert.ok(evaluated.breaches.some((item) => item.limit === "priceUnknown" && item.enforced));
+});

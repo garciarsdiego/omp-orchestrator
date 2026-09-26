@@ -1,4 +1,6 @@
-# OMP Orchestrator — próximos passos executáveis
+# OMP Orchestrator — plano histórico de julho de 2026
+
+> Este documento registra decisões da baseline 0.5–0.7 e não é o plano de execução atual. Consulte `README.md`, `docs/IMPLEMENTATION-5-PHASES.md` e `docs/DEPLOY-VPS.md` para o estado da preview 0.8.0.
 
 Data: 2026-07-28
 Estado-base: plugin `0.5.0`, Oh My Pi `17.1.8`, 10 providers prontos,

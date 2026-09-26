@@ -56,7 +56,21 @@ export function validateOutput(output, contract = "text") {
     if (!/^<!DOCTYPE html>/i.test(text)) errors.push("Output must start with <!DOCTYPE html>.");
     if (!/<\/html>$/i.test(text)) errors.push("Output must end with </html>.");
     if (/^```|```$/m.test(text)) errors.push("Output must not contain Markdown fences.");
-    if (contract === "standalone_html" && /https?:\/\//i.test(text)) errors.push("Offline HTML must not contain external HTTP URLs.");
+    if (contract === "standalone_html") {
+      // A standalone document must carry its resources in the document. A
+      // protocol-relative URL has no http(s) prefix but still loads remotely.
+      const references = [
+        ...text.matchAll(/\b(?:src|href|poster|action|formaction|xlink:href)\s*=\s*(["'])(.*?)\1/gi),
+        ...text.matchAll(/\b(?:src|href|poster|action|formaction|xlink:href)\s*=\s*([^\s>"']+)/gi),
+        ...text.matchAll(/\burl\(\s*(["']?)(.*?)\1\s*\)/gi)
+      ].map((match) => match[2] ?? match[1]);
+      if (references.some((reference) => !/^(?:data:|#)/i.test(reference.trim()))) {
+        errors.push("Standalone HTML must embed its resources instead of loading external files or URLs.");
+      }
+      if (/\b(?:https?:)?\/\//i.test(text)) {
+        errors.push("Standalone HTML must not contain external HTTP URLs.");
+      }
+    }
     return { valid: errors.length === 0, contract, errors };
   }
   if (contract === "review_json") {

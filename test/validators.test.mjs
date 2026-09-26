@@ -15,3 +15,12 @@ test("standalone HTML validator rejects syntax errors and duplicate ids", () => 
   assert.equal(result.valid, false);
   assert.match(result.errors.join(" "), /syntax|Duplicate/i);
 });
+
+test("standalone HTML rejects protocol-relative scripts and accepts static documents", () => {
+  const remoteScript = '<!DOCTYPE html><html><body><script src="//example.invalid/app.js"></script><script>let x=1;</script></body></html>';
+  const offlineStatic = '<!DOCTYPE html><html><body><h1>Offline report</h1></body></html>';
+  assert.equal(validateStandaloneHtml(remoteScript).valid, false);
+  const result = validateStandaloneHtml(offlineStatic);
+  assert.equal(result.valid, true, JSON.stringify(result));
+  assert.equal(result.checks.javascriptSyntax, null);
+});

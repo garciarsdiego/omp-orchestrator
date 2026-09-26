@@ -3,7 +3,7 @@ import {
   chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync
 } from "node:fs";
 import path from "node:path";
-import { CAS_ROOT, getDatabase, STATE_ROOT } from "./storage.mjs";
+import { CAS_ROOT, getDatabase, STATE_ROOT, withImmediateTransaction } from "./storage.mjs";
 import { assertNoSecrets } from "./security.mjs";
 
 export const RUN_ROOT = process.env.OMP_ORCHESTRATOR_RUN_DIR
@@ -46,17 +46,16 @@ export function readRun(id) {
   return JSON.parse(row.payload);
 }
 
-export function writeRun(run) {
+function writeRunRecord(db, run) {
   assertRunId(run.id);
-  const db = getDatabase();
-  db.transaction(() => {
-    db.prepare(`
+  assertNoSecrets(run, "Run");
+  db.prepare(`
       INSERT INTO runs(id, template, status, phase, created_at, updated_at, worker_pid, payload)
       VALUES (@id, @template, @status, @phase, @createdAt, @updatedAt, @workerPid, @payload)
       ON CONFLICT(id) DO UPDATE SET
         template=excluded.template, status=excluded.status, phase=excluded.phase,
         updated_at=excluded.updated_at, worker_pid=excluded.worker_pid, payload=excluded.payload
-    `).run({
+  `).run({
       id: run.id,
       template: run.template,
       status: run.status,
@@ -65,57 +64,71 @@ export function writeRun(run) {
       updatedAt: run.updatedAt,
       workerPid: run.workerPid || null,
       payload: JSON.stringify(run)
-    });
-    db.prepare("DELETE FROM run_nodes WHERE run_id = ?").run(run.id);
-    const insertNode = db.prepare(`
+  });
+  db.prepare("DELETE FROM run_nodes WHERE run_id = ?").run(run.id);
+  const insertNode = db.prepare(`
       INSERT INTO run_nodes(run_id, node_id, type, status, job_id, selector, payload)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    for (const node of run.nodes || []) {
-      insertNode.run(
-        run.id, node.id, node.type, node.status, node.jobId || null, node.selector || null, JSON.stringify(node)
-      );
-    }
-    const linkArtifact = db.prepare(`
+  `);
+  for (const node of run.nodes || []) {
+    insertNode.run(
+      run.id, node.id, node.type, node.status, node.jobId || null, node.selector || null, JSON.stringify(node)
+    );
+  }
+  const linkArtifact = db.prepare(`
       INSERT INTO run_artifacts(run_id, name, sha256, created_at) VALUES (?, ?, ?, ?)
       ON CONFLICT(run_id, name) DO UPDATE SET sha256=excluded.sha256, created_at=excluded.created_at
-    `);
-    for (const artifact of run.artifacts || []) {
-      if (artifact?.name && artifact?.sha256) {
-        linkArtifact.run(run.id, artifact.name, artifact.sha256, run.updatedAt);
-      }
+  `);
+  for (const artifact of run.artifacts || []) {
+    if (artifact?.name && artifact?.sha256) {
+      linkArtifact.run(run.id, artifact.name, artifact.sha256, run.updatedAt);
     }
-    if (run.attestation) {
-      const artifactSha = run.artifacts?.at(-1)?.sha256 || null;
-      db.prepare(`
+  }
+  if (run.attestation) {
+    const artifactSha = run.artifacts?.at(-1)?.sha256 || null;
+    db.prepare(`
         INSERT INTO attestations(run_id, verdict, artifact_sha256, created_at, payload)
         VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(run_id) DO UPDATE SET verdict=excluded.verdict,
           artifact_sha256=excluded.artifact_sha256, created_at=excluded.created_at, payload=excluded.payload
-      `).run(
-        run.id,
-        run.attestation.verdict,
-        artifactSha,
-        run.attestation.at || new Date().toISOString(),
-        JSON.stringify(run.attestation)
-      );
-    }
-  })();
+    `).run(
+      run.id,
+      run.attestation.verdict,
+      artifactSha,
+      run.attestation.at || new Date().toISOString(),
+      JSON.stringify(run.attestation)
+    );
+  }
+}
+
+export function writeRun(run) {
+  const db = getDatabase();
+  db.transaction(() => writeRunRecord(db, run))();
   return run;
 }
 
 export function updateRun(id, mutate) {
-  const run = readRun(id);
-  const updated = mutate(run) || run;
-  updated.updatedAt = new Date().toISOString();
-  return writeRun(updated);
+  assertRunId(id);
+  return withImmediateTransaction(() => {
+    const db = getDatabase();
+    const row = db.prepare("SELECT payload FROM runs WHERE id = ?").get(id);
+    if (!row) throw new Error(`Run not found: ${id}`);
+    const run = JSON.parse(row.payload);
+    const updated = mutate(run) || run;
+    updated.updatedAt = new Date().toISOString();
+    writeRunRecord(db, updated);
+    return updated;
+  });
 }
 
 export function appendRunEvent(id, type, data = {}) {
   assertNoSecrets(data, "Run event");
-  const db = getDatabase();
-  return db.transaction(() => {
-    const run = readRun(id);
+  assertRunId(id);
+  return withImmediateTransaction(() => {
+    const db = getDatabase();
+    const row = db.prepare("SELECT payload FROM runs WHERE id = ?").get(id);
+    if (!row) throw new Error(`Run not found: ${id}`);
+    const run = JSON.parse(row.payload);
     const event = {
       sequence: (run.eventCount || 0) + 1,
       type,
@@ -126,9 +139,9 @@ export function appendRunEvent(id, type, data = {}) {
       .run(id, event.sequence, event.type, event.at, JSON.stringify(event));
     run.eventCount = event.sequence;
     run.updatedAt = event.at;
-    writeRun(run);
+    writeRunRecord(db, run);
     return event;
-  })();
+  });
 }
 
 export function readRunEvents(id, after = 0, limit = 100) {

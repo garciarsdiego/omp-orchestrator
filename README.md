@@ -1,165 +1,106 @@
 # OMP Orchestrator
 
-An independent Codex plugin that uses a local
-[Oh My Pi](https://github.com/can1357/oh-my-pi) installation as a multi-provider
-runtime while Codex remains the root orchestrator and final reviewer.
+OMP Orchestrator coordinates model calls and agent jobs from a local CLI, an MCP client, or an authenticated stand-alone HTTP console. OMP is one execution backend; an administrator can register other headless CLIs through a small JSON contract. This project is independent of [Oh My Pi](https://github.com/can1357/oh-my-pi) and does not include provider credentials.
 
-## MVP scope
+The current code is an **unpublished preview**. It has been tested on Windows with Node 24 and OMP 18.3.0. The Linux x64 image pins OMP 18.3.2; Docker in WSL/Ubuntu built the image, ran the full suite, and exercised both Compose services with a fake backend. An actual provider inference or external VPS deployment has not been run as part of this implementation.
 
-- Detect the installed OMP executable and active configuration directory.
-- Read OMP model roles through the public CLI.
-- Search the model catalog without reading credential databases.
-- Report readiness for the approved Claude, Codex, Cursor, Grok, Qwen, Kimi,
-  Devin, Gemini, DeepSeek, and Cerebras provider set.
-- Give Codex workflows for planning, delegation, review, and setup.
-- Manage an authenticated loopback broker/gateway runtime with explicit confirmation.
-- Run asynchronous, persistent inference jobs through configured OMP roles.
-- Run explicitly approved jobs through an exact available provider/model selector
-  when the provider is not assigned to one of OMP's finite role slots.
-- Validate `text`, `json`, and standalone `html` output contracts before review.
-- Execute isolated, budgeted DAG runs with checkpoints and Codex attestation.
-- Never return API keys, OAuth tokens, or raw contents of `agent.db`.
+## What runs where
 
-The MCP server is dependency-free and uses Node.js 20 or newer. OMP must be
-installed separately and available on `PATH`, or its executable can be supplied
-through `OMP_EXECUTABLE`.
+| Entry | Purpose | Start |
+|---|---|---|
+| CLI | JSON discovery and tool calls from scripts or any CLI able to launch a process | `node bin/omp-orchestrator.mjs tools` |
+| MCP stdio | Local agents with MCP support | `node bin/omp-orchestrator.mjs mcp` |
+| HTTP | Remote MCP, JSON API, and browser console | `node bin/omp-orchestrator.mjs serve` |
 
-## Local checks
+| Backend | Work unit | Available controls |
+|---|---|---|
+| OMP inference | Bounded Responses call through the local authenticated gateway | Estimate, create, retry, cancel, validate |
+| `omp-rpc` | OMP agent process in a named workspace | Prompt, lifecycle events, steer, abort; completion waits for `session_settled` |
+| `command-json` | An administrator-registered headless CLI process | One prompt on stdin, one JSON result on stdout, cancel |
 
-```powershell
+The core exposes the same operations through CLI, MCP, and HTTP. A CLI that is only interactive or has no reliable machine output needs a wrapper or a dedicated adapter; the project does not claim to run every executable unmodified. `omp_agent_backends` reports capabilities instead of implying that all backends can steer or report token cost.
+
+## Local install and inspection
+
+Requires Node 22 or 24. `better-sqlite3` is a native dependency, installed from `package-lock.json`. OMP must be installed separately for the OMP backends. The command backend can run without OMP.
+
+```sh
+npm ci
 npm test
+node bin/omp-orchestrator.mjs tools
+node bin/omp-orchestrator.mjs doctor
 npm run smoke
 ```
 
-## Architecture
+`doctor` reports configured OMP roles that are absent from its current available model catalog. `smoke` checks public OMP metadata commands and prints unresolved roles; it does not test a provider account or consume quota. An OMP login on one machine or in another CLI does not authenticate an OMP installation on a VPS.
+`omp_providers` enumerates every provider ID currently seen in OMP's available model catalog and retains the older ten-family grouping for compatibility. Presence in that catalog does not prove current endpoint reachability or remaining quota.
 
-```text
-User -> Codex (plan/review) -> plugin skills + MCP -> OMP CLI -> providers/models
+`OMP_ORCHESTRATOR_STATE_DIR` selects the SQLite/WAL state and artifact root. `OMP_ORCHESTRATOR_WORKSPACE_ROOT` selects the parent of named agent workspaces. The default workspace root is under the state directory. Back up both the database and the content-addressed artifact objects; see [VPS deployment](docs/DEPLOY-VPS.md).
+
+### CLI and MCP clients
+
+The CLI writes one JSON value to stdout, with errors on stderr and a nonzero exit code. `call` validates the tool's published JSON schema before executing it. Use `--input-file -` to pipe arguments without shell quoting:
+
+```sh
+node bin/omp-orchestrator.mjs call omp_agent_backends --input-file -
+node bin/omp-orchestrator.mjs call omp_job_estimate --input-file request.json
 ```
 
-Catalog and configuration access remain read-only. The second milestone adds an
-opt-in local runtime manager: it starts an OMP credential broker on
-`127.0.0.1:9000` and an authenticated OpenAI-compatible gateway on
-`127.0.0.1:4000`. Start and stop operations require `confirm=true`; bearer
-tokens are created and consumed internally and are never returned by MCP tools.
+For a local MCP client, configure its command as an absolute path to Node and its argument as an absolute path to `bin/omp-orchestrator.mjs`, followed by `mcp`. When the package is installed as a CLI, the `omp-orchestrator mcp` command serves the same tools. The Codex plugin manifest remains under `.codex-plugin/`.
 
-Jobs require `confirmQuota=true`, are capped at four concurrent executions by
-default, and persist only in the operating-system temporary directory. Failed
-or invalid jobs can be retried without repeating successful jobs. Codex provider
-configuration writes and quota-aware automatic routing remain disabled.
+The stdio server uses the official MCP TypeScript SDK and serves both older handshake clients and the 2026-07-28 protocol. HTTP uses Streamable HTTP at `/mcp`. Tool arguments are validated on both transports; lists use an object wrapper in `structuredContent` so strict MCP clients can parse them.
 
-## Job lifecycle
+### Agent jobs
 
-```text
-queued -> running -> succeeded
-                  -> invalid (shape/contract failure)
-                  -> failed  (transport/provider failure)
+Administrators may register command backends in a JSON file selected by `OMP_ORCHESTRATOR_BACKENDS_FILE`:
+
+```json
+{
+  "backends": [
+    {
+      "id": "my-agent",
+      "type": "command-json",
+      "executable": "/usr/local/bin/my-agent-wrapper",
+      "args": ["--json"],
+      "envAllowlist": []
+    }
+  ]
+}
 ```
 
-Use `omp_job_create`, poll with `omp_job_get`, and retrieve a completed body with
-`omp_job_result`. A retry requires a second explicit quota confirmation.
-Every attempt receives a unique `prompt_cache_key` so gateway credential
-stickiness cannot accidentally reuse another job's conversational session.
+The configured command receives the prompt on UTF-8 stdin, with no shell interpolation. It must write exactly one JSON object to stdout:
 
-Use `omp_providers` to see which approved providers are currently selectable.
-An unavailable OAuth provider must be authenticated inside OMP itself; another
-CLI being logged in does not imply that OMP can reuse its credential. Jobs accept
-exactly one of `role` or `selector`, and an explicit selector must already be
-present in OMP's available catalog.
-
-## Version 0.5 provider and run workflow
-
-The approved provider set is:
-
-| Logical provider | OMP provider id(s) |
-|---|---|
-| Claude | `anthropic` |
-| Codex | `openai-codex` |
-| Cursor | `cursor` |
-| Grok | `xai-oauth`, `xai` |
-| Qwen | `qwen-portal`, `alibaba-coding-plan`, `alibaba-token-plan` |
-| Kimi | `kimi-code`, `moonshot` |
-| Devin | `devin` |
-| Gemini | `google-antigravity`, `google-gemini-cli`, `google` |
-| DeepSeek | `deepseek` |
-| Cerebras | `cerebras` |
-
-`omp_providers` reports actual readiness from OMP's available model catalog.
-This is stronger than merely finding another provider CLI on `PATH`: OMP must
-have its own resolvable credential before a provider is marked ready.
-The authenticated local snapshot used for the 0.5 baseline exposes 352 models;
-this is diagnostic evidence, not a fixed product contract.
-
-1. Preview with `omp_run_estimate`.
-2. Approve budget and quota with `omp_run_create`.
-3. Observe durable state with `omp_run_get` and `omp_run_events`.
-4. Inspect the validated candidate when status is `awaiting_codex`.
-5. Record `accept`, `revise`, or `reject` through `omp_run_attest`.
-6. Retrieve an accepted artifact with `omp_run_result`.
-
-Subscription-backed providers use `costPolicy: "observe"` by default. Calls,
-tokens, and duration remain hard safety limits, while API-equivalent USD is
-reported as an operational comparison rather than treated as an invoice or a
-blocking spend limit. Use `costPolicy: "enforce"` for pay-as-you-go credentials,
-or `disabled` when equivalent-cost reporting is not useful.
-
-Budget values are workload envelopes, not universal constants:
-
-- `maxCalls` is derived from the template's reachable inference nodes plus only
-  explicitly approved fallbacks;
-- `maxTotalTokens` is the sum of estimated input and maximum output for those
-  calls, with a measured safety margin;
-- `maxDurationMs` should start from observed provider p95 latency plus bounded
-  orchestration overhead.
-
-Compare estimates with actual usage after each run and tighten or expand future
-envelopes. A retry or newly reachable fallback is a budget change, not free
-capacity.
-
-Version 0.7 applies the same policy vocabulary to standalone jobs. Use
-`omp_job_estimate` before quota approval, `omp_job_create` with a bounded
-`budget`, and `omp_job_cancel` for explicit termination. `omp_pricing_coverage`
-reports which active roles have exact, ranged, proxied, stale, or unknown
-equivalent-cost data.
-
-Pricing data lives in `config/pricing-registry.json`. Every consumption event
-records the registry revision and digest used at execution time. Unknown prices
-remain unknown and are never silently aggregated as zero.
-
-Runs receive separate directories, job stores, artifacts, event logs, hashes,
-budgets, and provenance. Composer 2.5 is blocked for HTML artifact contracts over
-the Responses gateway because repeated clean-room runs produced invalid outputs.
-
-## Durable storage
-
-Version 0.6 stores orchestration state in a user-local SQLite database with WAL,
-foreign keys, bounded busy waiting, and transactional schema migrations. The
-default Windows location is `%LOCALAPPDATA%\omp-orchestrator`; override it with
-`OMP_ORCHESTRATOR_STATE_DIR`.
-
-Artifacts are immutable SHA-256 objects under the same state root and run
-records reference their hashes. Legacy `%TEMP%\omp-orchestrator` JSON data is
-never imported automatically:
-
-```powershell
-npm run migrate:json
-npm run migrate:json -- --apply
+```json
+{"output":"Work completed; see the changed files.","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30},"events":[{"type":"completed"}]}
 ```
 
-The first command is a dry run. The second applies only when all inspected JSON
-is valid and free from blocked high-confidence secret patterns. Keep the legacy
-directory until the imported ledger and artifacts have been reviewed.
+`usage` and `events` may be omitted. Missing usage remains unknown; the Orchestrator does not invent a zero cost. The configuration is operator-owned; a client cannot submit an arbitrary executable through `omp_agent_create`. Child processes get only fixed arguments and allowlisted environment values. Do not put secrets or broad host mounts in a worker's accessible workspace.
 
-## Security boundaries
+`omp_agent_create` requires a registered backend ID, a single directory name for `workspace`, a bounded prompt, `timeoutMs`, `confirmQuota: true`, and a stable `idempotencyKey`. A repeat with the same key returns the same job; a different request using that key fails. Use `omp_agent_get`, `omp_agent_events`, and `omp_agent_result` to inspect it. `omp_agent_steer` applies only to OMP RPC jobs; `omp_agent_abort` requests cancellation. A crashed job is marked interrupted and is never automatically replayed, because an external provider may already have consumed quota.
 
-- Both services bind only to `127.0.0.1`.
-- The gateway always requires its own bearer token; `--no-auth` is never used.
-- Broker and gateway tokens remain in OMP-managed files and process environment.
-- Runtime state stores only process ids and start time in the operating-system
-  temporary directory.
-- The stop operation targets only the process tree recorded by this plugin.
+The OMP RPC backend uses a child process and the upstream JSONL protocol. A `prompt_result` says a turn yielded; `session_settled` is the completion signal for the agent job. The adapter was exercised with a fake JSONL process and a read-only `get_state` handshake against local OMP 18.3.0. No live agent prompt was sent to OMP 18.3.2 during this work.
 
-## Legal
+Agent jobs currently enforce a wall-clock deadline and process count. They **do not claim hard token or price caps** on internal subcalls made by a CLI/agent. The backend's telemetry may be absent. The existing OMP inference jobs and DAG runs retain their separate budget controls.
 
-This repository has its own MIT license. OMP is also MIT-licensed and remains a
-separate dependency. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+### Run review
+
+Inference runs use three built-in templates: `multi-model-build-review`, `single-file-web-app`, and `independent-analysis`. Review starts at `awaiting_review`; legacy `awaiting_codex` runs remain readable. Read metadata with `omp_run_get`, then retrieve the candidate body with `omp_run_artifact`. The artifact is returned as text and is not executed in the browser console.
+
+`omp_run_attest` requires `accept`, `revise`, or `reject` plus `expectedArtifactSha256`, the hash of the artifact actually inspected. A changed candidate is rejected before the review can alter the run. Revision consumes quota and needs `confirmQuota: true`. Accepted results are available through `omp_run_result`. Shape validation and a reviewer decision do not prove that generated code is safe or correct.
+
+### Stand-alone HTTP
+
+Create a private token file containing at least 32 bytes and point `OMP_ORCHESTRATOR_ACCESS_TOKEN_FILE` at it. Start `npm run serve` or `node bin/omp-orchestrator.mjs serve --bind 127.0.0.1 --port 8080`. The console is at `/`, authenticated API at `/api/*`, MCP at `/mcp`, `/healthz` checks the HTTP process, and authenticated `/readyz` checks storage. The browser holds the token only in memory and needs it again after a reload.
+
+The listener binds to loopback by default. A bind beyond loopback requires `OMP_ORCHESTRATOR_PUBLIC_ORIGIN`; place TLS and an access policy at the edge. A single bearer token is shared by the trusted installation and does not identify individual teammates. Requests validate `Host` and `Origin`; the internal OMP broker/gateway remains separate from the product's HTTP listener. In Compose, a separate agent worker container receives jobs through the shared state volume and **does not mount the HTTP access token**.
+
+The [VPS guide](docs/DEPLOY-VPS.md) describes a pinned Linux x64 image, Compose, volumes, health checks, backup and restore, and a reverse TLS proxy. The browser UI can inspect runs, artifacts, jobs and agents and call any exposed tool. The worker still shares the SQLite state volume and OMP credential home with the trusted installation. It is **not** a hardened sandbox or tenant boundary for untrusted prompts/users. Workspaces prevent accidental directory mix-ups but do not stop an agent with shell access from reading other files available to the worker account.
+
+## Validation and limits
+
+- `npm test` exercises storage concurrency, budget enforcement, MCP protocol/argument validation, CLI from another directory, authenticated HTTP, both agent adapters with fake processes, and backup.
+- `npm run smoke` reads OMP CLI metadata without provider calls.
+- `npm pack --dry-run --json` checks the distribution file allowlist. This is not an npm publication; `private: true` is intentional.
+- Docker build, Compose startup, authentication checks, fake agent execution across both containers, and SQLite+CAS backup/restore passed on local WSL/Ubuntu. OMP 18.3.2 RPC metadata negotiation passed with a synthetic key and no prompt. Real provider execution, external TLS, and a VPS remain unverified.
+
+This repository uses the MIT License. OMP is an independent dependency; see [third-party notices](THIRD_PARTY_NOTICES.md). Older implementation notes in `NEXT_STEPS.md` are historical. The local audit that prompted this work remains in the workspace under `docs/audit-2026-09-25/`.
