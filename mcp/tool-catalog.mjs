@@ -14,6 +14,7 @@ import {
   abortAgentJob, createAgentJob, getAgentEvents, getAgentJob, getAgentResult,
   listAgentBackends, listAgentJobs, steerAgentJob
 } from "./agent-jobs.mjs";
+import { AUDITED_OPERATIONS, listAudit, recordAudit } from "./audit.mjs";
 
 export const startupRecovery = reconcileInterruptedWork();
 
@@ -341,10 +342,32 @@ export const tools = [
     description: "Request cancellation of an active agent job.",
     inputSchema: { type: "object", properties: { id: { type: "string" }, confirm: { type: "boolean" } },
       required: ["id", "confirm"], additionalProperties: false }
+  },
+  {
+    name: "omp_audit_list",
+    description: "List recent state-changing operations with actor, mechanism, target and outcome (no arguments are stored).",
+    inputSchema: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 500 } },
+      additionalProperties: false }
   }
 ];
 
+/**
+ * Every transport (stdio/HTTP MCP, HTTP API, CLI) dispatches here, so audit
+ * of state-changing operations lives in the core rather than per interface.
+ */
 export async function invoke(name, args = {}) {
+  if (!AUDITED_OPERATIONS.has(name)) return dispatch(name, args);
+  try {
+    const result = await dispatch(name, args);
+    recordAudit({ operation: name, targetId: args.id || result?.id || null, outcome: "ok" });
+    return result;
+  } catch (error) {
+    recordAudit({ operation: name, targetId: args.id || null, outcome: "error", errorName: error?.name || "Error" });
+    throw error;
+  }
+}
+
+async function dispatch(name, args) {
   if (name === "omp_status") return getStatus();
   if (name === "omp_doctor") return doctor();
   if (name === "omp_roles") return getRoles();
@@ -407,5 +430,6 @@ export async function invoke(name, args = {}) {
   if (name === "omp_agent_result") return getAgentResult(args);
   if (name === "omp_agent_steer") return steerAgentJob(args);
   if (name === "omp_agent_abort") return abortAgentJob(args);
+  if (name === "omp_audit_list") return listAudit(args);
   throw new Error(`Unknown tool: ${name}`);
 }

@@ -50,6 +50,20 @@ services:
 
 O arquivo `config/backends.local.json` é ignorado pelo Git e pelo build Docker. Não coloque credenciais nesse arquivo: o agente pode ler arquivos visíveis ao usuário do sidecar. Configure credenciais do motor separadamente e conceda somente o acesso necessário.
 
+## Tokens, rotação e auditoria
+
+O arquivo de token aceita várias linhas, uma por token. Cada linha pode ter a forma `nome:token`, e linhas em branco ou começando com `#` são ignoradas. Cada token precisa de pelo menos 32 bytes, e nomes e tokens não podem se repetir. O nome identifica o ator: operações que mudam estado (criar, cancelar, retomar, atestar, abortar, iniciar/parar runtime) geram um evento em `audit_events` com ator, mecanismo (`http-bearer`), operação, alvo e resultado. A consulta é feita pela ferramenta `omp_audit_list`. Os argumentos não são gravados, porque podem conter prompts. A atestação de revisão registra o mesmo ator. Transportes locais (MCP stdio e CLI) aparecem como `local-operator`.
+
+O servidor relê o arquivo até 1 s depois de uma alteração, sem reiniciar. Para rotacionar um token:
+
+```sh
+umask 077
+printf 'ana:%s\n' "$(openssl rand -base64 48 | tr -d '\n')" >> secrets/access-token   # novo, junto do antigo
+# distribua o novo token; quando ninguém mais usar o antigo, remova a linha dele
+```
+
+Escreva o arquivo novo de forma atômica (arquivo temporário + `mv`). Se a versão nova for inválida (vazia, token curto, duplicado), o servidor registra o erro e **mantém os tokens anteriores**, para não bloquear os operadores. Um único token numa linha sem nome continua funcionando e aparece como `default`.
+
 ## VPS com TLS reverso
 
 No VPS, mantenha `127.0.0.1:8080:8080` no Compose e faça Caddy, Nginx ou outro proxy TLS do host encaminhar para `http://127.0.0.1:8080`. Configure a origem pública antes de subir:

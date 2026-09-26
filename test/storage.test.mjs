@@ -68,7 +68,7 @@ function sampleRun(id = runs.newRunId()) {
 test("storage initializes a versioned SQLite WAL database", () => {
   const status = storage.storageStatus();
   assert.equal(status.journalMode, "wal");
-  assert.equal(status.schemaVersion, 3);
+  assert.equal(status.schemaVersion, storage.SCHEMA_VERSION);
   assert.match(status.databasePath, /orchestrator\.sqlite$/);
   const tables = storage.getDatabase().prepare(
     "SELECT name FROM sqlite_master WHERE type = 'table'"
@@ -253,11 +253,11 @@ test("read-modify-write updates are serialized across processes for a shared run
 test("concurrent first initialization applies migrations once", async () => {
   const freshRoot = path.join(root, "fresh-concurrent-state");
   const code = `
-    import { getDatabase, storageStatus } from "./mcp/storage.mjs";
+    import { getDatabase, SCHEMA_VERSION, storageStatus } from "./mcp/storage.mjs";
     const db = getDatabase();
-    if (storageStatus().schemaVersion !== 3) process.exit(3);
+    if (storageStatus().schemaVersion !== SCHEMA_VERSION) process.exit(3);
     if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'").get()) process.exit(4);
-    if (db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get().count !== 3) process.exit(5);
+    if (db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get().count !== SCHEMA_VERSION) process.exit(5);
   `;
   const workers = Array.from({ length: 8 }, () => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", code], {
@@ -290,7 +290,8 @@ test("schema v3 migrates legacy review status and backs up the v2 file", async (
   await runInit(`
     import { getDatabase, closeDatabase } from "./mcp/storage.mjs";
     const db = getDatabase();
-    db.prepare("DELETE FROM schema_migrations WHERE version = 3").run();
+    db.prepare("DELETE FROM schema_migrations WHERE version > 2").run();
+    db.exec("DROP TABLE audit_events");
     const now = new Date().toISOString();
     db.prepare("INSERT INTO runs(id, template, status, phase, created_at, updated_at, worker_pid, payload) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)")
       .run("legacy-run", "t", "awaiting_codex", "attestation", now, now, JSON.stringify({ id: "legacy-run", status: "awaiting_codex" }));
@@ -302,7 +303,9 @@ test("schema v3 migrates legacy review status and backs up the v2 file", async (
     const row = getDatabase().prepare("SELECT status, json_extract(payload, '$.status') AS payloadStatus FROM runs WHERE id = 'legacy-run'").get();
     console.log(JSON.stringify({ ...row, version: storageStatus().schemaVersion, backup: existsSync(DATABASE_PATH + ".bak-v2") }));
   `));
-  assert.deepEqual(result, { status: "awaiting_review", payloadStatus: "awaiting_review", version: 3, backup: true });
+  assert.deepEqual(result, {
+    status: "awaiting_review", payloadStatus: "awaiting_review", version: storage.SCHEMA_VERSION, backup: true
+  });
 });
 
 test("legacy migration is dry-run by default, explicit, and idempotent", () => {

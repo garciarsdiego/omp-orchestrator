@@ -18,6 +18,9 @@ export const DATABASE_PATH = process.env.OMP_ORCHESTRATOR_DB_PATH
 export const CAS_ROOT = process.env.OMP_ORCHESTRATOR_CAS_DIR
   || path.join(STATE_ROOT, "objects", "sha256");
 
+/** Latest schema version this code writes; older code must tolerate it. */
+export const SCHEMA_VERSION = 4;
+
 let database;
 
 function restrict(pathname, mode) {
@@ -208,7 +211,26 @@ function migrate(db) {
       SET status = 'awaiting_review', payload = json_set(payload, '$.status', 'awaiting_review')
       WHERE status = 'awaiting_codex';
     `
+  }, {
+    version: 4,
+    name: "audit_events",
+    // Who changed state, through which mechanism. Arguments are not stored:
+    // prompts and findings may contain sensitive text.
+    sql: `
+      CREATE TABLE audit_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        mechanism TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        target_id TEXT,
+        outcome TEXT NOT NULL,
+        error_name TEXT
+      );
+      CREATE INDEX audit_events_at ON audit_events(at DESC);
+    `
   }];
+  if (migrations.at(-1).version !== SCHEMA_VERSION) throw new Error("SCHEMA_VERSION is out of date.");
   const beforeLock = new Set(db.prepare("SELECT version FROM schema_migrations").all().map((row) => row.version));
   const pendingBeforeLock = migrations.filter((migration) => !beforeLock.has(migration.version));
   if (beforeLock.size && pendingBeforeLock.length && existsSync(DATABASE_PATH)) {

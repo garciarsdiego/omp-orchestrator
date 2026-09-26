@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { readJob, updateJob } from "./job-store.mjs";
 import { getRoles } from "./lib.mjs";
 import { processReused, workerProcess } from "./process-identity.mjs";
+import { currentActor } from "./request-context.mjs";
 import { parseRoleSelector } from "./gateway.mjs";
 import { estimateModelCost, sumCosts } from "./pricing.mjs";
 import {
@@ -270,7 +271,12 @@ export async function attestRun({ id, verdict, findings = [], expectedArtifactSh
       throw new Error("This pipeline allows one paid revision per run.");
     }
     const at = new Date().toISOString();
-    const attestation = { verdict, findings: normalizedFindings, at, artifactSha256: artifact.sha256 };
+    // Who attested and how they authenticated; naming a client in the payload
+    // alone does not prove it reviewed anything.
+    const { name: actor, mechanism } = currentActor();
+    const attestation = {
+      verdict, findings: normalizedFindings, at, artifactSha256: artifact.sha256, actor, mechanism
+    };
     const nodeStatus = verdict === "accept" ? "succeeded" : verdict === "reject" ? "failed" : "revision_requested";
     const updated = updateRun(id, (current) => ({
       ...current,
@@ -286,7 +292,9 @@ export async function attestRun({ id, verdict, findings = [], expectedArtifactSh
       nodes: current.nodes.map((node) => node.type === "attestation" || node.id === "codex"
         ? { ...node, status: nodeStatus, verdict, completedAt: at } : node)
     }));
-    appendRunEvent(id, "review.attested", { verdict, findingCount: normalizedFindings.length, artifactSha256: artifact.sha256 });
+    appendRunEvent(id, "review.attested", {
+      verdict, findingCount: normalizedFindings.length, artifactSha256: artifact.sha256, actor, mechanism
+    });
     if (verdict === "accept") appendRunEvent(id, "run.succeeded", { artifact: artifact.name });
     else if (verdict === "reject") appendRunEvent(id, "run.rejected");
     else appendRunEvent(id, "run.revision_started", { revisionCount: updated.revisionCount });

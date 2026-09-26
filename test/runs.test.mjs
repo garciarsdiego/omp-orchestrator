@@ -208,6 +208,9 @@ test("a reviewer accepts only the inspected artifact hash", async () => {
   const result = await manager.attestRun({ id, verdict: "accept", findings: [], expectedArtifactSha256: artifact.sha256 });
   assert.equal(result.status, "succeeded");
   assert.equal(result.attestation.artifactSha256, artifact.sha256);
+  // Local transports attest as the machine operator; HTTP uses the token name.
+  assert.equal(result.attestation.actor, "local-operator");
+  assert.equal(result.attestation.mechanism, "local-process");
   assert.equal(manager.getRunResult({ id }).output, "<!DOCTYPE html><html></html>");
 });
 
