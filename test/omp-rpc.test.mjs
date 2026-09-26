@@ -4,13 +4,49 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { OmpRpcError, startOmpRpc } from "../mcp/backends/omp-rpc.mjs";
+import { createOmpUsageAccumulator, OmpRpcError, startOmpRpc } from "../mcp/backends/omp-rpc.mjs";
 
 const root = mkdtempSync(path.join(os.tmpdir(), "omp-orchestrator-rpc-test-"));
 const fixture = fileURLToPath(new URL("../fixtures/fake-omp-rpc.mjs", import.meta.url));
 
 test.after(() => {
   rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+});
+
+test("OMP usage sums assistant message_end frames once and keeps unknown cost unknown", () => {
+  const empty = createOmpUsageAccumulator();
+  empty.add({ type: "message_end", messageId: "u", message: { role: "user", content: "x" } });
+  empty.add({ type: "agent_end", messages: [] });
+  assert.equal(empty.result(), null, "no reported usage stays unknown, never zero");
+
+  const usage = createOmpUsageAccumulator();
+  const turn = (id, input, output, cost) => ({ type: "message_end", messageId: id, message: {
+    role: "assistant", provider: "p", model: "m",
+    usage: { input, output, cacheRead: 5, cacheWrite: 1, totalTokens: input + output + 6, ...(cost === undefined ? {} : { cost: { total: cost } }) }
+  } });
+  usage.add(turn("a1", 100, 10, 0.25));
+  usage.add(turn("a1", 100, 10, 0.25));
+  usage.add({ type: "agent_end", messages: [turn("a1", 100, 10, 0.25).message] });
+  usage.add(turn("a2", 50, 5, undefined));
+  assert.deepEqual(usage.result(), {
+    complete: true,
+    input_tokens: 162, input_tokens_details: { cached_tokens: 10 }, output_tokens: 15, total_tokens: 177,
+    source: "omp-rpc", assistantMessages: 2, models: ["p/m"], ompEquivalentCostUsd: null
+  });
+
+  // A real abort reported all-zero usage: that is unknown, not free.
+  const zeroUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { total: 0 } };
+  const abortedOnly = createOmpUsageAccumulator();
+  abortedOnly.add({ type: "message_end", messageId: "x", message: { role: "assistant", stopReason: "aborted", usage: zeroUsage } });
+  assert.equal(abortedOnly.result(), null);
+  const mixed = createOmpUsageAccumulator();
+  mixed.add(turn("b1", 10, 2, 0.01));
+  mixed.add({ type: "message_end", messageId: "b2", message: { role: "assistant", stopReason: "aborted", usage: zeroUsage } });
+  const partial = mixed.result();
+  assert.equal(partial.complete, false);
+  assert.equal(partial.unreportedAssistantMessages, 1);
+  assert.equal(partial.total_tokens, 18);
+  assert.equal(partial.ompEquivalentCostUsd, null);
 });
 
 async function startClient() {

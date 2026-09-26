@@ -62,7 +62,15 @@ test("RPC backend waits for session_settled and exposes event cursors", async ()
   const types = [...first.events, ...rest.events].map((event) => event.type);
   assert.ok(types.includes("omp.prompt_result"));
   assert.ok(types.includes("omp.session_settled"));
-  assert.equal(jobs.getAgentResult({ id: created.id }).usage, null);
+  // Usage from the assistant message_end, counted once although agent_end
+  // repeats the message; input includes cache reads.
+  const result = jobs.getAgentResult({ id: created.id });
+  assert.equal(result.output, "done");
+  assert.deepEqual(result.usage, {
+    complete: true,
+    input_tokens: 120, input_tokens_details: { cached_tokens: 20 }, output_tokens: 7, total_tokens: 127,
+    source: "omp-rpc", assistantMessages: 1, models: ["fake-provider/fake-model"], ompEquivalentCostUsd: 0.0012
+  });
 });
 
 test("a trusted command backend can be cancelled without replaying the prompt", async () => {

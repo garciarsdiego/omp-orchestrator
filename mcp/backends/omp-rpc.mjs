@@ -380,3 +380,74 @@ export async function startOmpRpc(options) {
   const client = new OmpRpcClient(options);
   return client.start();
 }
+
+const count = (value) => Number.isFinite(value) && value >= 0 ? value : 0;
+
+/**
+ * Sums the usage OMP reports on assistant `message_end` frames (observed on
+ * OMP 18.3.2: `usage.{input,output,cacheRead,cacheWrite,totalTokens,cost.total}`
+ * plus the effective `provider`/`model`). `agent_end` repeats the same
+ * messages, so only `message_end` counts, deduplicated by `messageId`.
+ * Returns null when OMP reported nothing: unknown usage stays unknown.
+ *
+ * An aborted or failed assistant message arrives with all-zero usage (seen on
+ * a real abort): the provider stream was cut before it reported usage, not
+ * free. Such messages count as unreported; the result then says
+ * `complete: false` and no cost estimate is claimed.
+ */
+export function createOmpUsageAccumulator() {
+  const seen = new Set();
+  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, cost: 0 };
+  const models = new Set();
+  let messages = 0;
+  let unreported = 0;
+  let costKnown = true;
+  return {
+    add(frame) {
+      const message = frame?.type === "message_end" ? frame.message : null;
+      if (message?.role !== "assistant") return;
+      const key = frame.messageId ?? message.responseId;
+      if (key !== undefined && key !== null) {
+        if (seen.has(key)) return;
+        seen.add(key);
+      }
+      if (typeof message.provider === "string" && typeof message.model === "string") {
+        models.add(`${message.provider}/${message.model}`.slice(0, 160));
+      }
+      const { usage } = message;
+      const reportedTotal = usage && typeof usage === "object"
+        ? count(usage.totalTokens) + count(usage.input) + count(usage.output) : 0;
+      if (!usage || typeof usage !== "object" || (reportedTotal === 0 && ["aborted", "error"].includes(message.stopReason))) {
+        unreported += 1;
+        return;
+      }
+      const parts = [count(usage.input), count(usage.output), count(usage.cacheRead), count(usage.cacheWrite)];
+      totals.input += parts[0];
+      totals.output += parts[1];
+      totals.cacheRead += parts[2];
+      totals.cacheWrite += parts[3];
+      totals.total += count(usage.totalTokens) || parts.reduce((sum, value) => sum + value, 0);
+      if (Number.isFinite(usage.cost?.total) && usage.cost.total >= 0) totals.cost += usage.cost.total;
+      else costKnown = false;
+      messages += 1;
+    },
+    result() {
+      if (!messages) return null;
+      const complete = unreported === 0;
+      return {
+        complete,
+        ...(complete ? {} : { unreportedAssistantMessages: unreported }),
+        // Responses-style fields used by the ledger; input includes cache.
+        input_tokens: totals.input + totals.cacheRead + totals.cacheWrite,
+        input_tokens_details: { cached_tokens: totals.cacheRead },
+        output_tokens: totals.output,
+        total_tokens: totals.total,
+        source: "omp-rpc",
+        assistantMessages: messages,
+        models: [...models],
+        // OMP's own API-equivalent estimate; not an invoice.
+        ompEquivalentCostUsd: costKnown && complete ? Math.round(totals.cost * 1e6) / 1e6 : null
+      };
+    }
+  };
+}

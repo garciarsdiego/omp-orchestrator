@@ -36,6 +36,15 @@ input.on("line", (line) => {
     if (command.message === "complete") {
       setTimeout(() => {
         if (activePrompt?.id !== command.id) return;
+        // Frame shape observed from OMP 18.3.2; values are synthetic.
+        const assistant = {
+          role: "assistant", provider: "fake-provider", model: "fake-model", content: [{ type: "text", text: "done" }],
+          usage: { input: 100, output: 7, cacheRead: 20, cacheWrite: 0, totalTokens: 127,
+            cost: { input: 0.001, output: 0.0002, cacheRead: 0, cacheWrite: 0, total: 0.0012 } }
+        };
+        send({ type: "message_end", messageId: "user-1", message: { role: "user", content: "complete" } });
+        send({ type: "message_end", messageId: "assistant-1", message: assistant });
+        send({ type: "agent_end", isTerminal: true, yielded: false, messages: [{ role: "user", content: "complete" }, assistant] });
         send({ type: "prompt_result", id: command.id, agentInvoked: true, status: "completed", sessionSettled: false });
         setTimeout(() => send({ type: "session_settled" }), 15);
         activePrompt = null;
