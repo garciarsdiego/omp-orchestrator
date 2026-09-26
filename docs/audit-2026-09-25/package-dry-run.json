@@ -1,0 +1,261 @@
+[
+  {
+    "id": "omp-orchestrator@0.7.0",
+    "name": "omp-orchestrator",
+    "version": "0.7.0",
+    "size": 55194,
+    "unpackedSize": 201808,
+    "shasum": "9267bc30a3718238079b66f2092b33619ee40dce",
+    "integrity": "sha512-eifa9isd5MhNmdlgl5D8yg5FA0Wc3kX8ukAh2JGstOJ5bd6l/2yZ4VS124pknUrQwoLK7VEvJ4i7LsAS2v8utA==",
+    "filename": "omp-orchestrator-0.7.0.tgz",
+    "files": [
+      {
+        "path": ".codex-plugin/plugin.json",
+        "size": 1046,
+        "mode": 420
+      },
+      {
+        "path": ".mcp.json",
+        "size": 145,
+        "mode": 420
+      },
+      {
+        "path": "CHANGELOG.md",
+        "size": 3581,
+        "mode": 420
+      },
+      {
+        "path": "LICENSE",
+        "size": 1083,
+        "mode": 420
+      },
+      {
+        "path": "NEXT_STEPS.md",
+        "size": 14023,
+        "mode": 420
+      },
+      {
+        "path": "PROVIDER_MODELS_2026-07-28.md",
+        "size": 6235,
+        "mode": 420
+      },
+      {
+        "path": "README.md",
+        "size": 7442,
+        "mode": 420
+      },
+      {
+        "path": "THIRD_PARTY_NOTICES.md",
+        "size": 741,
+        "mode": 420
+      },
+      {
+        "path": "config/pricing-registry.json",
+        "size": 1743,
+        "mode": 420
+      },
+      {
+        "path": "docs/audit-2026-09-25/dependencies-audit.json",
+        "size": 360,
+        "mode": 420
+      },
+      {
+        "path": "docs/audit-2026-09-25/HANDOFF.md",
+        "size": 1332,
+        "mode": 420
+      },
+      {
+        "path": "docs/audit-2026-09-25/package-dry-run.json",
+        "size": 0,
+        "mode": 420
+      },
+      {
+        "path": "mcp/budget.mjs",
+        "size": 5738,
+        "mode": 420
+      },
+      {
+        "path": "mcp/gateway.mjs",
+        "size": 7194,
+        "mode": 420
+      },
+      {
+        "path": "mcp/job-store.mjs",
+        "size": 7858,
+        "mode": 420
+      },
+      {
+        "path": "mcp/job-worker.mjs",
+        "size": 2993,
+        "mode": 420
+      },
+      {
+        "path": "mcp/jobs.mjs",
+        "size": 10345,
+        "mode": 420
+      },
+      {
+        "path": "mcp/lib.mjs",
+        "size": 2987,
+        "mode": 420
+      },
+      {
+        "path": "mcp/migration.mjs",
+        "size": 3649,
+        "mode": 420
+      },
+      {
+        "path": "mcp/pricing.mjs",
+        "size": 7468,
+        "mode": 420
+      },
+      {
+        "path": "mcp/providers.mjs",
+        "size": 3370,
+        "mode": 420
+      },
+      {
+        "path": "mcp/recovery.mjs",
+        "size": 2366,
+        "mode": 420
+      },
+      {
+        "path": "mcp/run-manager.mjs",
+        "size": 13791,
+        "mode": 420
+      },
+      {
+        "path": "mcp/run-store.mjs",
+        "size": 8460,
+        "mode": 420
+      },
+      {
+        "path": "mcp/run-worker.mjs",
+        "size": 14601,
+        "mode": 420
+      },
+      {
+        "path": "mcp/runtime.mjs",
+        "size": 5192,
+        "mode": 420
+      },
+      {
+        "path": "mcp/security.mjs",
+        "size": 908,
+        "mode": 420
+      },
+      {
+        "path": "mcp/server.mjs",
+        "size": 16760,
+        "mode": 420
+      },
+      {
+        "path": "mcp/storage.mjs",
+        "size": 8573,
+        "mode": 420
+      },
+      {
+        "path": "mcp/templates.mjs",
+        "size": 2728,
+        "mode": 420
+      },
+      {
+        "path": "mcp/validators.mjs",
+        "size": 1682,
+        "mode": 420
+      },
+      {
+        "path": "package.json",
+        "size": 458,
+        "mode": 420
+      },
+      {
+        "path": "scripts/migrate-json.mjs",
+        "size": 511,
+        "mode": 420
+      },
+      {
+        "path": "scripts/smoke.mjs",
+        "size": 630,
+        "mode": 420
+      },
+      {
+        "path": "skills/omp-orchestrate/SKILL.md",
+        "size": 1883,
+        "mode": 420
+      },
+      {
+        "path": "skills/omp-review/SKILL.md",
+        "size": 1060,
+        "mode": 420
+      },
+      {
+        "path": "skills/omp-setup/SKILL.md",
+        "size": 1546,
+        "mode": 420
+      },
+      {
+        "path": "skills/omp-sync/SKILL.md",
+        "size": 745,
+        "mode": 420
+      },
+      {
+        "path": "test/budget.test.mjs",
+        "size": 2342,
+        "mode": 420
+      },
+      {
+        "path": "test/gateway.test.mjs",
+        "size": 2882,
+        "mode": 420
+      },
+      {
+        "path": "test/jobs.test.mjs",
+        "size": 1624,
+        "mode": 420
+      },
+      {
+        "path": "test/lib.test.mjs",
+        "size": 432,
+        "mode": 420
+      },
+      {
+        "path": "test/pricing.test.mjs",
+        "size": 3644,
+        "mode": 420
+      },
+      {
+        "path": "test/providers.test.mjs",
+        "size": 1766,
+        "mode": 420
+      },
+      {
+        "path": "test/runs.test.mjs",
+        "size": 6156,
+        "mode": 420
+      },
+      {
+        "path": "test/runtime.test.mjs",
+        "size": 341,
+        "mode": 420
+      },
+      {
+        "path": "test/server.test.mjs",
+        "size": 1740,
+        "mode": 420
+      },
+      {
+        "path": "test/storage.test.mjs",
+        "size": 8691,
+        "mode": 420
+      },
+      {
+        "path": "test/validators.test.mjs",
+        "size": 963,
+        "mode": 420
+      }
+    ],
+    "entryCount": 49,
+    "bundled": []
+  }
+]

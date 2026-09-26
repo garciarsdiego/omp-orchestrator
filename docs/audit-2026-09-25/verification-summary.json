@@ -1,0 +1,42 @@
+{
+  "verifiedAt": "2026-09-26T01:38:40.021Z",
+  "commit": "1f304720fce254e2bee0901dfcb96b16028b018a",
+  "node": "v24.17.0",
+  "tests": {
+    "total": 46,
+    "passed": 46,
+    "failed": 0,
+    "skipped": 0,
+    "source": "tests-baseline.log"
+  },
+  "dependenciesKnownVulnerabilities": 0,
+  "smoke": {
+    "passed": false,
+    "reason": "OMP doctor failed",
+    "omp": "omp/18.3.0",
+    "roles": 16,
+    "models": 1498,
+    "unresolvedRoles": [
+      "task",
+      "web",
+      "image",
+      "speech",
+      "default"
+    ]
+  },
+  "interfaceProbeAt": "2026-09-26T01:32:49.281Z",
+  "findings": {
+    "P1": 10,
+    "P2": 8,
+    "total": 18
+  },
+  "runtimeReproductionEvidence": "Synthetic, provider-free probe results\nGenerated: 2026-09-26T01:37:06.510Z\n\nlostUpdate:\n  expected: 1000\n  observed: 523\n  child exit codes: 0, 0\n  SQLite quick_check: ok\n\nstateTransitions:\n  secretPersisted: true\n  terminalRewrite: succeeded -> cancelled\n  orphanRecovery:\n    reconciled jobs: 0\n    job status: running\n    run status: interrupted\n    recovered node status: interrupted\n    prepared resume jobId: null\n\nbudgetEdges:\n  missing usage under costPolicy=enforce:\n    aggregate equivalentHighUsd: 0\n    breaches: []\n  normalized zero remaining budget:\n    maxInputTokens: 128000\n    maxOutputTokens: 100\n    maxTotalTokens: 192000\n\nlegacyMigration:\n  first apply: success, one run and one event\n  second apply: UNIQUE constraint failed: events.run_id, events.sequence\n  legacy timestamp: 2025-01-01T00:00:00.000Z\n  stored timestamp: 2026-09-26T01:37:02.952Z\n\nschemaRace:\n  trials: 20\n  processes per trial: 8\n  trials with one or more startup failures: 11\n  sample: SqliteError: table jobs already exists\n\nNo provider, credential, real OMP runtime, or external service was used.\n",
+  "localReportLinks": {
+    "count": 10,
+    "missing": []
+  },
+  "trackedProductDiff": "",
+  "stagedDiff": "",
+  "providerInferenceExecuted": false,
+  "vpsDeployExecuted": false
+}
