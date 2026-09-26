@@ -62,6 +62,9 @@ test("adapter capabilities report cursor cache as exclusive counters", () => {
   assert.match(byProfile.cursor.cacheBehavior, /exclusive/i);
   assert.equal(byProfile.claude.usageSemantics, "anthropic-exclusive-cache");
   assert.equal(byProfile.devin.usageReported, false);
+  // Headless CLIs that gate on workspace trust are told the workspace is trusted.
+  assert.deepEqual(CLI_PROFILES.devin.args([], "prompt.txt").slice(1, 3), ["--respect-workspace-trust", "false"]);
+  assert.ok(CLI_PROFILES.cursor.args([], "x").includes("--trust"));
   // A cursor document without usage stays unknown instead of zero.
   assert.equal(cliProfile("cursor").parse(JSON.stringify({
     type: "result", subtype: "success", is_error: false, result: "ok"

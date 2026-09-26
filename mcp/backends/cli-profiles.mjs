@@ -161,7 +161,7 @@ export const CLI_PROFILES = {
   grok: {
     // grok takes the prompt only as an argument (-p); see cursor.
     promptVia: "argv",
-    args: (fixed, prompt) => [...fixed, "--output-format", "json", "-p", prompt],
+    args: (fixed, prompt) => [...fixed, "--output-format", "json", "-p", "--", prompt],
     parse(stdout) {
       const doc = parseJson(stdout, "grok");
       if (typeof doc.text !== "string") fail("grok result has no text.");
@@ -178,7 +178,9 @@ export const CLI_PROFILES = {
 
   devin: {
     promptVia: "file",
-    args: (fixed, promptFile) => [...fixed, "-p", "--prompt-file", promptFile],
+    // -p cannot show the workspace trust prompt and refuses to run in a new
+    // directory; the Orchestrator owns the workspace, like cursor's --trust.
+    args: (fixed, promptFile) => [...fixed, "-p", "--respect-workspace-trust", "false", "--prompt-file", promptFile],
     // devin -p prints plain text only: usage stays unknown.
     parse(stdout) {
       const output = stdout.trim();

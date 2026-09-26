@@ -11,8 +11,7 @@ const file = after("-f") ?? after("--prompt-file");
 if (file) {
   if (!existsSync(file)) { process.stderr.write("prompt file missing\n"); process.exit(3); }
   prompt = readFileSync(file, "utf8");
-} else if (format === "grok") prompt = after("-p");
-else if (format === "cursor" || format === "codex") {
+} else if (format === "cursor" || format === "codex" || format === "grok") {
   // Like the real option parsers: a positional that starts with "-" is an
   // option unless it comes after "--".
   const end = args.indexOf("--");
