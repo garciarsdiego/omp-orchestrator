@@ -26,6 +26,10 @@ process.stdin.on("end", () => {
       process.stderr.write(`diagnostic:${prompt}`);
       process.exitCode = 2;
       break;
+    case "stderr-secret":
+      process.stderr.write(`login failed for sk-${"a".repeat(24)}`);
+      process.exitCode = 2;
+      break;
     default:
       process.stderr.write("unknown mode");
       process.exitCode = 2;

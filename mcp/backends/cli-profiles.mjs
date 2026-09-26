@@ -55,7 +55,7 @@ function modelsFrom(modelUsage) {
 /** Capability facts for one CLI adapter profile, shown by omp_agent_backends. */
 function profileCapabilities(name) {
   const facts = {
-    codex: { usageReported: true, usageSemantics: "openai-inclusive-cache", usageIncludes: ["input_tokens", "cached_input_tokens", "output_tokens"], cacheBehavior: "input_tokens already includes cached input; reported per completed turn", promptDelivery: "stdin", usageUnknownAs: "missing turns fail loudly (never zero)" },
+    codex: { usageReported: true, usageSemantics: "openai-inclusive-cache", usageIncludes: ["input_tokens", "cached_input_tokens", "output_tokens"], cacheBehavior: "input_tokens already includes cached input; reported per completed turn", promptDelivery: "argv (visible in the local process list while running)", usageUnknownAs: "missing turns fail loudly (never zero)" },
     claude: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "cache reads/writes are exclusive of input_tokens and are summed into the normalized input total", promptDelivery: "stdin", usageUnknownAs: "unknown stays omitted (never zero)" },
     droid: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "same exclusive-cache sum as the other Anthropic-style CLIs", promptDelivery: "private temp file", usageUnknownAs: "unknown stays omitted (never zero)" },
     cursor: { usageReported: true, usageSemantics: "cursor-inclusive-cache-partition", usageIncludes: ["inputTokens", "cacheReadTokens", "cacheWriteTokens", "outputTokens"], cacheBehavior: "inputTokens is the full prompt; cacheReadTokens/cacheWriteTokens partition it (inputTokens - cacheReadTokens - cacheWriteTokens = uncached input); independent pi-cursor-sdk observation, vendor docs do not define it", promptDelivery: "argv (visible in the local process list while running)", usageUnknownAs: "unknown stays omitted (never zero)" },
@@ -79,8 +79,11 @@ function resultDocument(stdout, cli) {
 
 export const CLI_PROFILES = {
   codex: {
-    promptVia: "stdin",
-    args: (fixed) => ["exec", ...fixed, "--json", "--skip-git-repo-check", "--ephemeral", "-"],
+    // codex exec reads extra piped stdin as a `<stdin>` block appended to the
+    // prompt argument. The adapter therefore passes the prompt as the argument
+    // and closes stdin (the adapter's stdin pipe is not forwarded).
+    promptVia: "argv",
+    args: (fixed, prompt) => ["exec", ...fixed, "--json", "--skip-git-repo-check", "--ephemeral", "--", prompt],
     parse(stdout) {
       const events = parseJsonLines(stdout);
       const failed = events.find((event) => event.type === "turn.failed" || event.type === "error");
@@ -137,7 +140,7 @@ export const CLI_PROFILES = {
     // cursor-agent takes the prompt only as an argument; it is visible in the
     // local process list while the job runs.
     promptVia: "argv",
-    args: (fixed, prompt) => [...fixed, "-p", "--output-format", "json", "--trust", prompt],
+    args: (fixed, prompt) => [...fixed, "-p", "--output-format", "json", "--trust", "--", prompt],
     parse(stdout) {
       const doc = resultDocument(stdout, "cursor-agent");
       const raw = doc.usage;

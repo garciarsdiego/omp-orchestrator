@@ -1,0 +1,65 @@
+# Gate-2 QA: orchestrator + sidecar running real engines (omp-rpc and the
+# seven command-json CLIs). Run it through test/compose/gate2.sh, which writes
+# the throwaway token/backends and an override that mounts the existing CLI
+# logins into the sidecar only. Credentials never enter Git or the image, and
+# the HTTP service never sees them.
+services:
+  orchestrator:
+    build: ../..
+    image: omp-orchestrator:gate2
+    restart: "no"
+    ports:
+      - "127.0.0.1:${OMP_GATE2_PORT:-18280}:8080"
+    environment:
+      OMP_ORCHESTRATOR_ACCESS_TOKEN_FILE: /run/omp-orchestrator/access-token
+      OMP_ORCHESTRATOR_AGENT_DISPATCH: external
+      OMP_ORCHESTRATOR_PUBLIC_ORIGIN: ${OMP_GATE2_ORIGIN:-http://127.0.0.1:18280}
+      OMP_ORCHESTRATOR_WORKSPACE_ROOT: /workspaces
+      OMP_ORCHESTRATOR_BACKENDS_FILE: /run/omp-orchestrator/backends.json
+    volumes:
+      - omp-gate2-state:/var/lib/omp-orchestrator
+      - omp-gate2-workspaces:/workspaces
+      - ${OMP_GATE2_TOKEN_FILE:?set by gate2.sh}:/run/omp-orchestrator/access-token:ro
+      - ${OMP_GATE2_BACKENDS:?set by gate2.sh}:/run/omp-orchestrator/backends.json:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8080/healthz >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  agent-worker:
+    image: omp-orchestrator:gate2
+    command: ["node", "mcp/agent-supervisor.mjs"]
+    restart: "no"
+    depends_on:
+      - orchestrator
+    # HOME, PATH, the private tmpfs HOME and the login mounts come from the
+    # override gate2.sh writes: the sidecar uses the host user's HOME path so
+    # absolute symlinks and paths inside CLI configs resolve.
+    environment:
+      OMP_ORCHESTRATOR_AGENT_DISPATCH: external
+      OMP_ORCHESTRATOR_WORKSPACE_ROOT: /workspaces
+      OMP_ORCHESTRATOR_BACKENDS_FILE: /run/omp-orchestrator/backends.json
+    volumes:
+      - omp-gate2-state:/var/lib/omp-orchestrator
+      - omp-gate2-workspaces:/workspaces
+      - ${OMP_GATE2_BACKENDS:?set by gate2.sh}:/run/omp-orchestrator/backends.json:ro
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /var/lib/omp-orchestrator/state/agent-supervisor.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  omp-gate2-state:
+  omp-gate2-workspaces:

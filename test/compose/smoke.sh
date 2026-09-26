@@ -119,9 +119,14 @@ step "synthetic run artifact (backup coverage)"
 read -r run_id sha < <(dc exec -T orchestrator node --input-type=module -e '
   const runs = await import("/opt/omp-orchestrator/mcp/run-store.mjs");
   const now = new Date().toISOString(); const id = runs.newRunId();
-  runs.writeRun({ id, template: "compose-smoke", status: "awaiting_review", phase: "attestation", budget: {},
-    estimate: {}, usage: {}, nodes: [], artifacts: [], createdAt: now, updatedAt: now, completedAt: null, workerPid: null });
-  console.log(id + " " + runs.writeArtifact(id, "smoke.txt", "compose restore evidence").sha256);')
+  const run = { id, template: "compose-smoke", status: "awaiting_review", phase: "attestation", budget: {},
+    estimate: {}, usage: {}, nodes: [], artifacts: [], createdAt: now, updatedAt: now, completedAt: null, workerPid: null };
+  runs.writeRun(run);
+  // Listed in the payload like run-worker does, so the console can open it.
+  // The markup must show as text in the browser, never render.
+  const artifact = runs.writeArtifact(id, "smoke.txt", "<img src=x onerror=alert(1)> compose restore evidence");
+  runs.writeRun({ ...run, artifacts: [artifact] });
+  console.log(id + " " + artifact.sha256);')
 check "artifact written" test "${#sha}" = 64
 
 step "restart both services"

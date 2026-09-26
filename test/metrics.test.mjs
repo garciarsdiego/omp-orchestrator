@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -68,4 +68,16 @@ test("metrics are authenticated and exposed as Prometheus text and JSON", async 
   const viaTool = await invoke("omp_metrics");
   assert.deepEqual(viaTool.jobs, json.jobs);
   assert.deepEqual(viaTool.runs, json.runs);
+});
+
+test("observability doc matches the authenticated metrics surface", () => {
+  const doc = readFileSync(new URL("../docs/OBSERVABILITY.md", import.meta.url), "utf8");
+  // The runbook must only promise what the server exposes today.
+  for (const token of ["/metrics", "/api/metrics", "omp_metrics", "credentials_file",
+    "omp_orchestrator_agent_supervisor_ready", "omp_orchestrator_http_auth_failures_total",
+    "omp_orchestrator_http_requests_total", "readyz", "omp_audit_list"]) {
+    assert.ok(doc.includes(token), token);
+  }
+  assert.ok(!doc.includes("secrets/access-token:") || doc.includes("apenas no servi\u00e7o HTTP") || doc.includes("montado somente leitura"),
+    "token file handling stays explicit");
 });

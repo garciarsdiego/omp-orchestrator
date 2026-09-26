@@ -3,7 +3,7 @@ import { runCommandJob } from "./backends/command-json.mjs";
 import { appendAgentEvent, resolveBackend } from "./agent-jobs.mjs";
 import { finalizeJobWithLedger, readJob, updateJob } from "./job-store.mjs";
 import { workerProcess } from "./process-identity.mjs";
-import { assertNoSecrets } from "./security.mjs";
+import { assertNoSecrets, scanForSecrets } from "./security.mjs";
 
 const id = process.argv[2];
 if (!id) process.exit(2);
@@ -20,6 +20,18 @@ function assistantText(frame) {
 function errorSummary(error) {
   return { name: error?.name || "AgentError", code: error?.code || null,
     message: ["TIMEOUT", "CANCELLED"].includes(error?.code) ? error.message : "Agent backend failed; inspect the event log." };
+}
+
+const STDERR_TAIL_CHARS = 2_000;
+
+// What "inspect the event log" points at: the error code, exit status and the
+// end of stderr. command-json has already redacted the prompt from stderr; a
+// tail that still matches a secret pattern is withheld rather than stored.
+function failureEvent(error) {
+  const tail = typeof error?.stderr === "string" && error.stderr.trim() ? error.stderr.trim().slice(-STDERR_TAIL_CHARS) : null;
+  const blocked = tail !== null && scanForSecrets(tail).length > 0;
+  return { code: error?.code || null, exitCode: Number.isInteger(error?.exitCode) ? error.exitCode : null,
+    stderrTail: blocked ? null : tail, ...(blocked ? { stderrWithheld: "blocked secret pattern" } : {}) };
 }
 
 async function run() {
@@ -153,6 +165,7 @@ async function run() {
       usage: partialUsage ?? job.usage ?? null,
       error: cancelled ? null : errorSummary(error)
     }), { cost: null, mode: "observe" });
+    if (!cancelled) appendAgentEvent(id, "agent.failed", failureEvent(error));
     appendAgentEvent(id, "agent.completed", { status: readJob(id).status, usageKnown: Boolean(partialUsage) });
   } finally {
     clearInterval(poller);

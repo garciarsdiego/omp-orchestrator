@@ -46,6 +46,11 @@ test("each CLI profile reaches the prompt its way and normalizes usage", async (
   assert.equal(readdirSync(os.tmpdir()).filter((entry) => entry.startsWith("omp-agent-cli-") && !entry.startsWith("omp-agent-cli-test-")).length, 0);
 });
 
+test("a prompt that looks like an option still reaches every CLI as the prompt", async () => {
+  const prompt = "--help -p x";
+  for (const name of Object.keys(CLI_PROFILES)) assert.equal((await run(name, prompt)).output, `received:${prompt}`, name);
+});
+
 test("adapter capabilities report cursor cache as an inclusive partition", () => {
   const byProfile = Object.fromEntries(cliCapabilities().map((entry) => [entry.profile, entry]));
   for (const [name, entry] of Object.entries(byProfile)) {

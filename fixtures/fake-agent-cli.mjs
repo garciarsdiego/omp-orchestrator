@@ -12,8 +12,13 @@ if (file) {
   if (!existsSync(file)) { process.stderr.write("prompt file missing\n"); process.exit(3); }
   prompt = readFileSync(file, "utf8");
 } else if (format === "grok") prompt = after("-p");
-else if (format === "cursor") prompt = args.at(-1);
-else prompt = readFileSync(0, "utf8");
+else if (format === "cursor" || format === "codex") {
+  // Like the real option parsers: a positional that starts with "-" is an
+  // option unless it comes after "--".
+  const end = args.indexOf("--");
+  prompt = end >= 0 ? args[end + 1] : args.at(-1);
+  if (end < 0 && prompt?.startsWith("-")) { process.stderr.write("unexpected argument\n"); process.exit(2); }
+} else prompt = readFileSync(0, "utf8");
 const text = `received:${prompt}`;
 
 const outputs = {
