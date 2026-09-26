@@ -86,6 +86,17 @@ test("named tokens identify the actor, rotate without restart and never lock out
   assert.equal((await request(alice, "/api/tools")).status, 401);
   assert.equal((await request(carol, "/api/tools")).status, 200);
 
+  // The console refresh path (overview) and the metrics endpoints only work
+  // with a named token and never echo its value.
+  for (const pathname of ["/api/overview", "/api/metrics", "/metrics"]) {
+    assert.equal((await fetch(`${base}${pathname}`)).status, 401);
+    const response = await fetch(`${base}${pathname}`, { headers: { authorization: `Bearer ${carol}` } });
+    assert.equal(response.status, 200, pathname);
+    assert.doesNotMatch(await response.text(), new RegExp(carol));
+  }
+  const overview = await (await fetch(`${base}/api/overview`, { headers: { authorization: `Bearer ${carol}` } })).json();
+  assert.ok(Array.isArray(overview.runs) && Array.isArray(overview.jobs) && Array.isArray(overview.agents));
+
   // An invalid rewrite keeps the previous tokens instead of locking everyone out.
   writeFileSync(tokenFile, "short:abc\n");
   assert.equal((await request(carol, "/api/tools")).status, 200);
