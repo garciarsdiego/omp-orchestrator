@@ -257,8 +257,9 @@ test("concurrent first initialization applies migrations once", async () => {
     const db = getDatabase();
     if (storageStatus().schemaVersion !== 2) process.exit(3);
     if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'").get()) process.exit(4);
+    if (db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get().count !== 2) process.exit(5);
   `;
-  const workers = Array.from({ length: 4 }, () => new Promise((resolve, reject) => {
+  const workers = Array.from({ length: 8 }, () => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", code], {
       cwd: process.cwd(),
       env: { ...process.env, OMP_ORCHESTRATOR_STATE_DIR: freshRoot },

@@ -240,17 +240,49 @@ export function withImmediateTransaction(work) {
   return db.inTransaction ? db.transaction(work)() : runImmediateTransaction(db, work);
 }
 
+const INIT_BUSY_DEADLINE_MS = 10_000;
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
+
+function isBusy(error) {
+  return typeof error?.code === "string" && error.code.startsWith("SQLITE_BUSY");
+}
+
+// Switching a new file into WAL mode and WAL recovery can return SQLITE_BUSY
+// without consulting the busy handler while another process initializes the
+// same database. Initialization is idempotent (migrations re-check under
+// BEGIN IMMEDIATE), so retry it with bounded backoff.
+function retryWhileBusy(work) {
+  const deadline = Date.now() + INIT_BUSY_DEADLINE_MS;
+  let delay = 10;
+  for (;;) {
+    try {
+      return work();
+    } catch (error) {
+      if (!isBusy(error) || Date.now() >= deadline) throw error;
+      Atomics.wait(sleeper, 0, 0, delay);
+      delay = Math.min(delay * 2, 250);
+    }
+  }
+}
+
 export function getDatabase() {
   if (database) return database;
   mkdirSync(path.dirname(DATABASE_PATH), { recursive: true, mode: 0o700 });
   restrict(path.dirname(DATABASE_PATH), 0o700);
-  database = new Database(DATABASE_PATH, { timeout: 5_000 });
-  database.pragma("busy_timeout = 5000");
-  database.pragma("journal_mode = WAL");
-  database.pragma("synchronous = NORMAL");
-  database.pragma("foreign_keys = ON");
-  migrate(database);
+  const db = new Database(DATABASE_PATH, { timeout: 5_000 });
+  try {
+    db.pragma("busy_timeout = 5000");
+    retryWhileBusy(() => db.pragma("journal_mode = WAL"));
+    db.pragma("synchronous = NORMAL");
+    db.pragma("foreign_keys = ON");
+    retryWhileBusy(() => migrate(db));
+  } catch (error) {
+    // Never cache a handle whose pragmas or migrations did not complete.
+    try { db.close(); } catch {}
+    throw error;
+  }
   restrict(DATABASE_PATH, 0o600);
+  database = db;
   return database;
 }
 
