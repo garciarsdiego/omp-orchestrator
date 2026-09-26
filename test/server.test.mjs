@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+const packageVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 test("MCP lists provider readiness and selector-aware job tools", () => {
   const stateRoot = mkdtempSync(path.join(os.tmpdir(), "omp-orchestrator-server-test-"));
@@ -25,7 +27,7 @@ test("MCP lists provider readiness and selector-aware job tools", () => {
   rmSync(stateRoot, { recursive: true, force: true });
   assert.equal(result.status, 0, result.stderr);
   const responses = result.stdout.trim().split(/\r?\n/).map((line) => JSON.parse(line));
-  assert.equal(responses[0].result.serverInfo.version, "0.8.0-preview.1");
+  assert.equal(responses[0].result.serverInfo.version, packageVersion);
   const tools = responses[1].result.tools;
   assert.ok(tools.some((tool) => tool.name === "omp_providers"));
   assert.ok(tools.some((tool) => tool.name === "omp_storage_status"));

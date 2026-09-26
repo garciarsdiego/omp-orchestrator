@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0-preview.2 — Unreleased
+
+- Fixed job listing (`/api/overview` returned HTTP 500), intermittent `SQLITE_BUSY` during concurrent first start, and an invalid console `pattern` that disabled client-side workspace validation.
+- Added process identity (Linux `/proc` start time, Windows start FILETIME): a reused PID no longer keeps a job running or receives a cancellation signal.
+- Review is client-neutral. Schema v3 migrates `awaiting_codex` to `awaiting_review`, and templates name the attestation node `review`. Legacy runs remain readable and reviewable.
+- The HTTP access token file accepts several named tokens, reloads without a restart and keeps the old tokens when a rewrite is invalid. Schema v4 records an audit event (actor, mechanism, operation, target, outcome) for every state-changing operation. Review attestations carry the actor.
+- Added authenticated `/metrics` (Prometheus text) and `/api/metrics` (JSON), plus the `omp_metrics` and `omp_audit_list` tools.
+- Added `test/compose/smoke.sh` (also in CI) and `test/compose/upgrade-rollback.sh`, which rehearses an upgrade, an image-only rollback and a restore of a pre-upgrade backup across a schema migration.
+- CI runs an ESLint `no-undef` check.
+
 ## 0.8.0-preview.1 — Unreleased
 
 - Added a shared tool catalog served through MCP stdio, authenticated HTTP, and a JSON CLI.

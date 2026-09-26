@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+const packageVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 const cli = fileURLToPath(new URL("../bin/omp-orchestrator.mjs", import.meta.url));
 const commandFixture = fileURLToPath(new URL("../fixtures/command-json-fake.mjs", import.meta.url));
@@ -94,7 +96,7 @@ test("stand-alone HTTP exposes authenticated API and modern MCP on the same core
     body: JSON.stringify({ name: "omp_routing_policy", arguments: {} })
   });
   assert.equal(valid.status, 200);
-  assert.equal((await valid.json()).result.version, "0.8.0-preview.1");
+  assert.equal((await valid.json()).result.version, packageVersion);
   const meta = {
     "io.modelcontextprotocol/protocolVersion": "2026-07-28",
     "io.modelcontextprotocol/clientInfo": { name: "test-client", version: "1.0" },

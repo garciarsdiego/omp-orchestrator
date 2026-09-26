@@ -1,8 +1,8 @@
 {
   "name": "omp-orchestrator",
-  "version": "0.8.0-preview.1",
+  "version": "0.8.0-preview.2",
   "private": true,
-  "description": "Codex plugin for safe orchestration over a local Oh My Pi installation",
+  "description": "Policy, state and execution layer for OMP and headless agent CLIs, controlled through CLI, MCP and HTTP",
   "type": "module",
   "bin": {
     "omp-orchestrator": "./bin/omp-orchestrator.mjs"
