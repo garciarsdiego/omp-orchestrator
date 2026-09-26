@@ -308,8 +308,6 @@ Execuções reais pelo Orchestrator (`omp_agent_create` via CLI, workspace vazio
 
 Commits: `8b4a54a` (produto+README), `3d3cdb1` (testes de UI/HTTP), `35be67b` (docs) e `42c7623` (smoke limpo).
 
-Commits: `8b4a54a` (produto+README), `3d3cdb1` (testes de UI/HTTP) e `35be67b` (docs).
-
 - `omp_agent_backends` agora declara, por backend, `usageReported`, `usageSemantics`, `usageIncludes`, `cacheBehavior`, `promptDelivery` e `usageUnknownAs` (sempre omitido, nunca zero), além das capacidades antigas (`steer`, `abort`, `sessionEvents`, `tokenLimitEnforced: false`, `providerCostKnown: false`).
 - `omp-rpc` declara `omp-message-end` (frames `message_end` do assistente, deduplicados por `messageId`; `aborted`/`error` com uso zerado contam como não reportados).
 - `command-json` sem adaptador declara `operator-command-json` (só o que o comando do operador reportar é gravado).
@@ -333,3 +331,51 @@ Commits: `8b4a54a` (produto+README), `3d3cdb1` (testes de UI/HTTP) e `35be67b` (
 - Cursor real com a nova normalização inclusiva continua pendente de reexecução com quota.
 - Observabilidade (item 6, opção B) ainda não implementada: só existe a base (`/metrics` + `/api/metrics` + `omp_metrics` + exemplo de scrape com `credentials_file` em `DEPLOY-VPS.md`).
 - Browser real do console continua pendente (item 4: guia abaixo).
+
+### 13. Rodada de 26/09/2026 à noite (gates 1–3, branch `codex/omp-postmerge`)
+
+Autorizado nesta sessão: 8 prompts reais mínimos com os logins existentes do WSL montados só no sidecar; stack local, browser embutido e `prom/prometheus` do Docker Hub; push ao final. Merge, release, VPS/TLS continuam fora.
+
+Commits: `91ec86c`, `1c04345`, `3ed04ba`, `3897111`, `851b89b`, `fcb2270` e o desta documentação.
+
+- **`91ec86c` — `--` antes do prompt posicional.** Codex (desde `989309a`) e Cursor recebem o prompt como argumento; um prompt começando com `-` virava opção. O fake agora rejeita posicional com `-` como um parser real, e um teste manda `--help -p x` por todos os perfis (falhava antes). O Codex real aceitou o `--` no gate 1. Grok recebe o prompt como valor de `-p`; um prompt com `-` inicial ali não foi testado.
+- **`3ed04ba` — `agent.failed`.** Job falho dizia "inspect the event log", mas o log só tinha `started`/`completed`. Agora grava código, exit e os últimos 2000 caracteres do stderr. O prompt já vinha redigido pelo `command-json`; uma cauda com padrão de segredo é retida (`stderrWithheld`). Testes: prompt redigido e segredo retido.
+- **`1c04345`, `3897111` — `test/compose/gate2.sh`.** Sidecar com o mesmo caminho de HOME do host num tmpfs privado (`~/.omp` com `exec` para o addon nativo), `~/.local` rw e cada login existente montado no próprio caminho; nada é copiado. O serviço HTTP não vê credencial e o sidecar não vê o token (checado a cada execução). `ONLY`, `KEEP` e `down`. Achados reais que motivaram o layout: pais de mounts aninhados criados como root, symlinks absolutos dos instaladores, Devin/Muse gravando logs e locks em `~/.local`.
+- **`851b89b`** — o seed do smoke lista o artifact na run, com markup hostil.
+- **`fcb2270` — rotação no lugar.** O Compose monta o token como arquivo único; `mv` troca o inode e o container segue lendo o antigo. Medido: depois do `mv`, token novo 401; após restart, 200. Com reescrita no lugar: novo 200, removido 401, operador 200, sem restart. O runbook antigo do `OBSERVABILITY.md` também gerava um token do Prometheus que nunca entrava no arquivo. `BROWSER-QA.md` tinha PowerShell dentro de um laço bash.
+
+**Gate 1 (motores reais no container Linux), parcial: 4 de 8.** Imagem do HEAD, OMP 18.3.2, WSL Docker 29.8.1.
+
+| Motor | Resultado | Tempo | Tokens registrados |
+|---|---|---|---|
+| omp-rpc `opencode-go/muse-spark-1.3-contributor --thinking high` | `succeeded`, `GATE2-real-rpc-OK` | 5 s | 9.077 |
+| Codex (argv com `--`) | `succeeded` | 10 s | 13.486 |
+| Claude Code 2.1.283 | `succeeded` | 10 s | 30.247 |
+| Muse | `succeeded` | 20 s | desconhecido (não reportado) |
+| Grok | `failed`: `Not signed in` (não há `~/.grok/auth.json` no WSL) | 5 s | — |
+| Devin | `failed`: `Login canceled` (sem login Linux) | 5 s | — |
+| Cursor | `failed`: `Authentication required` (`cursor-agent status`: `Not logged in`) | 5 s | — |
+| Droid 0.228.0 | `failed`, exit 1 sem stderr (não há `~/.factory`; só existe `FACTORY_API_KEY` no `.env` do OMP, não montado) | 10 s | — |
+
+As execuções anteriores da mesma sessão (layout antigo) também tiveram omp-rpc 9.087 e Codex 13.485 `succeeded`, Claude 25.663 `succeeded`. O Cursor com a partição inclusiva continua **sem execução real**. Drift de versão observado e aceito: Claude 2.1.283 e Droid 0.228.0 contra as versões capturadas em `cli-profiles.mjs`.
+
+**Gate 2 (browser), concluído** no browser embutido contra o smoke do HEAD (`KEEP=1`, token descartável):
+
+- conecta com o token; overview com runs/jobs/agents; métricas do topo com valores;
+- seletor: `omp-rpc · omp-rpc`, `fake-command · command-json · sem uso`; `title` com o `cacheBehavior`. O rótulo de perfil (`· codex` etc.) não aparece no smoke, que não usa adaptador;
+- run abre `omp_run_get` como texto; artifact `smoke.txt` com SHA-256, corpo `<img src=x onerror=alert(1)> …` mostrado como texto: nenhum `img`, nenhum `alert`, nenhum `iframe`;
+- `omp_agent_backends` pelo painel de ferramentas mostra `usageSemantics`;
+- recarregar: campo vazio, `localStorage`/`sessionStorage`/cookies vazios; `/api/overview`, `/api/metrics`, `/metrics` → 401.
+
+**Gate 3 (observabilidade prática), concluído com uma ressalva.** `prom/prometheus:v3.5.0` em `--network host`, scrape e regras copiados do `OBSERVABILITY.md`:
+
+- `promtool check config`: config válida, 5 regras;
+- alvo `up` com `credentials_file` do token nomeado `prometheus`; 21 séries; `omp_orchestrator_agent_supervisor_ready` 1;
+- 8 bearers errados → `increase(auth_failures[5m])` ≈ 9 → `OmpAuthFailuresSpike` `pending`;
+- sidecar parado → `supervisor_ready` 0 → `OmpAgentSupervisorNotReady` `pending`;
+- orchestrator parado → `up` 0 (o estado do `OmpOrchestratorDown` não foi capturado nos 15 s); depois do start, `up` e `ready` voltam a 1;
+- `OmpReadyzFailing` depende de blackbox exporter, não testado; nenhum alerta chegou a `firing` (os `for:` são de 2–5 min).
+
+**Verificações:** `npm run lint` limpo; Windows 117 passaram + 2 omitidos (Linux); imagem Linux `omp-orchestrator:check` 119/119; `test/compose/smoke.sh` `SMOKE OK` no HEAD, duas vezes. Sem migração: `upgrade-rollback.sh` não se aplica.
+
+**Limpeza:** stacks `omp-gate2`/`omp-browser`, container `omp-prom`, diretórios de QA e o volume vazio `omp-gate2-omp-home` (sessão anterior) removidos.
