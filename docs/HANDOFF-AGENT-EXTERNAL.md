@@ -21,7 +21,8 @@ O usuário confirmou os dois sentidos de integração (cliente e motor). O perfi
   7. `0650bc6` `test: add reproducible local Compose smoke for the two-service preview`
   8. `3397a43` `fix(web): make workspace pattern valid under the HTML v flag`
   9. `0cca729` `test: add down mode to the Compose smoke`
-  10. commit de documentação desta rodada (veja `git log`).
+  10. `379871d` `docs: record RT-10 fix, versioned Compose smoke and console QA`
+  11. commit de CI que roda o smoke no job `image` (veja `git log`).
 - Worktree original: `C:\Users\Diego\Documents\ChatGPT\OMP-Orchestrator`, branch `codex/omp-five-phases`, HEAD `75cf897`. Continua suja e **não foi alterada**:
   - modificados: `mcp/jobs.mjs` e `test/http.test.mjs`. É a mesma correção de `listJobs`, agora coberta por `2c4d818`;
   - não rastreados: `docs/audit-2026-09-25/`, capturas `docs/console-*.png`, `docs/PROMPT-AGENT-EXTERNAL.md` e a versão anterior deste handoff.
@@ -63,7 +64,7 @@ Não implemente na worktree original. Continue em `codex/omp-handoff` ou crie ou
 2. Resultado anterior de "passou uma vez" não prova estabilidade em testes de concorrência. Repita testes de concorrência no Linux (imagem) antes de declará-los estáveis.
 3. Para validar o stack local: `test/compose/smoke.sh` (Linux/WSL com Docker Compose v2). Use `KEEP=1` para deixar o ambiente de pé e `PROJECT=… test/compose/smoke.sh down` para remover.
 4. Próximos passos sem credencial/deploy:
-   - executar `test/compose/smoke.sh` no job `image` do CI;
+   - confirmar no primeiro push autorizado que o job `image` do CI executa `test/compose/smoke.sh`. O passo foi adicionado e validado só localmente;
    - identidade de processo no Windows (hoje só PID), se a instalação Windows for suportada para agentes de longa duração;
    - teste de UI para visualização de artifact de run, com uma run que liste artifacts no payload.
 5. Gates que exigem autorização explícita: prompt OMP real com limite aprovado, VPS e TLS reais, isolamento para workloads não confiáveis.
