@@ -35,16 +35,16 @@ fail() {
 }
 check() { local name="$1"; shift; if "$@"; then pass "$name"; else fail "$name"; fi; }
 
-rm -rf "$QA"; mkdir -p "$QA"; chmod 700 "$QA"
+rm -rf "$QA"; mkdir -p "$QA/secrets"; chmod 700 "$QA" "$QA/secrets"
 ( umask 077
-  openssl rand -base64 48 | tr -d '\n' > "$QA/access-token"
+  openssl rand -base64 48 | tr -d '\n' > "$QA/secrets/access-token"
   # The token reaches curl through a header file, never through argv.
-  printf 'Authorization: Bearer %s\n' "$(cat "$QA/access-token")" > "$QA/auth-header" )
+  printf 'Authorization: Bearer %s\n' "$(cat "$QA/secrets/access-token")" > "$QA/auth-header" )
 # The image runs as UID 1000 (see DEPLOY-VPS.md). When the host user differs
 # (e.g. CI runners use 1001), the throwaway token must be readable by it.
 if [ "$(id -u)" != 1000 ]; then
   echo "note: host UID $(id -u) != 1000; making the throwaway token world-readable for the container"
-  chmod 755 "$QA"; chmod 644 "$QA/access-token"
+  chmod 755 "$QA" "$QA/secrets"; chmod 644 "$QA/secrets/access-token"
 fi
 cat > "$QA/backends.json" <<'EOF'
 { "backends": [
@@ -64,7 +64,7 @@ services:
     environment: { OMP_ORCHESTRATOR_BACKENDS_FILE: /run/omp-orchestrator/backends.json }
     volumes: [ "$QA/backends.json:/run/omp-orchestrator/backends.json:ro" ]
 EOF
-export OMP_ORCHESTRATOR_HOST_PORT="$PORT" OMP_ORCHESTRATOR_TOKEN_FILE="$QA/access-token" \
+export OMP_ORCHESTRATOR_HOST_PORT="$PORT" OMP_ORCHESTRATOR_TOKEN_DIR="$QA/secrets" \
   OMP_ORCHESTRATOR_PUBLIC_ORIGIN="http://127.0.0.1:$PORT"
 
 dc() { docker compose -p "$PROJECT" -f "$REPO/compose.yaml" -f "$QA/override.yaml" "$@"; }
@@ -103,8 +103,18 @@ check "readyz 200 with token" wait_code "$base/readyz" 200 60 -H @"$QA/auth-head
 check "healthz 200" wait_code "$base/healthz" 200 5
 check "api without token 401" wait_code "$base/api/overview" 401 5
 check "foreign Origin rejected" wait_code "$base/api/overview" 403 5 -H @"$QA/auth-header" -H "Origin: http://evil.invalid"
-check "sidecar has no token file" bash -c "! docker compose -p '$PROJECT' -f '$REPO/compose.yaml' -f '$QA/override.yaml' exec -T agent-worker test -e /run/omp-orchestrator/access-token"
+check "sidecar has no token file" bash -c "! docker compose -p '$PROJECT' -f '$REPO/compose.yaml' -f '$QA/override.yaml' exec -T agent-worker test -e /run/omp-orchestrator/secrets"
 check "pinned OMP 18.3.2 in image" bash -c "docker compose -p '$PROJECT' -f '$REPO/compose.yaml' -f '$QA/override.yaml' exec -T agent-worker omp --version | grep -q 'omp/18.3.2'"
+
+step "atomic token rotation (temp file + mv) reaches the container without restart"
+( umask 077
+  rotated="$(openssl rand -base64 48 | tr -d '\n')"
+  printf 'operator:%s\nrotated:%s\n' "$(cat "$QA/secrets/access-token")" "$rotated" > "$QA/secrets/access-token.next"
+  printf 'Authorization: Bearer %s\n' "$rotated" > "$QA/rotated-header" )
+[ "$(id -u)" = 1000 ] || chmod 644 "$QA/secrets/access-token.next"
+mv "$QA/secrets/access-token.next" "$QA/secrets/access-token"
+check "rotated token accepted after mv" wait_code "$base/readyz" 200 10 -H @"$QA/rotated-header"
+check "operator token still accepted" wait_code "$base/readyz" 200 5 -H @"$QA/auth-header"
 
 step "fake agent job executed by the sidecar"
 id=$(agent_create "$base" fake-command smoke-key-0001 hello-compose)
@@ -165,8 +175,8 @@ docker rm -f "$RESTORED" >/dev/null 2>&1 || true
 # Stand-alone restored copy: no sidecar, so agent dispatch runs in local mode.
 docker run -d --name "$RESTORED" --read-only --tmpfs /tmp --security-opt no-new-privileges:true \
   -p "127.0.0.1:$RESTORE_PORT:8080" -v "$RESTORE_VOLUME:/var/lib/omp-orchestrator" \
-  -v "$QA/access-token:/run/omp-orchestrator/access-token:ro" \
-  -e OMP_ORCHESTRATOR_ACCESS_TOKEN_FILE=/run/omp-orchestrator/access-token \
+  -v "$QA/secrets:/run/omp-orchestrator/secrets:ro" \
+  -e OMP_ORCHESTRATOR_ACCESS_TOKEN_FILE=/run/omp-orchestrator/secrets/access-token \
   -e OMP_ORCHESTRATOR_PUBLIC_ORIGIN="$rbase" "$IMAGE" >/dev/null
 check "restored readyz 200" wait_code "$rbase/readyz" 200 30 -H @"$QA/auth-header"
 check "restored job result readable" bash -c "$(declare -f call); QA='$QA'; call '$rbase' '{\"name\":\"omp_agent_result\",\"arguments\":{\"id\":\"$id\"}}' | grep -q received:hello-compose"
@@ -177,7 +187,7 @@ check "restored artifact content" docker exec "$RESTORED" node --input-type=modu
 if [ "$KEEP" = 1 ]; then
   echo
   echo "KEEP=1: stack left running on $base (restored copy on $rbase)."
-  echo "Throwaway token file: $QA/access-token"
+  echo "Throwaway token file: $QA/secrets/access-token"
   echo "Tear down: PROJECT=$PROJECT $0 down"
 fi
 echo "SMOKE OK"

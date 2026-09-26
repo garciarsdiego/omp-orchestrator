@@ -42,13 +42,13 @@ if ! docker image inspect "$OLD_IMAGE" >/dev/null 2>&1; then
 fi
 docker image inspect "$NEW_IMAGE" >/dev/null 2>&1 || docker build -q -t "$NEW_IMAGE" "$REPO" >/dev/null
 
-rm -rf "$QA"; mkdir -p "$QA"; chmod 700 "$QA"
+rm -rf "$QA"; mkdir -p "$QA/secrets"; chmod 700 "$QA" "$QA/secrets"
 ( umask 077
-  openssl rand -base64 48 | tr -d '\n' > "$QA/access-token"
-  printf 'Authorization: Bearer %s\n' "$(cat "$QA/access-token")" > "$QA/auth-header" )
+  openssl rand -base64 48 | tr -d '\n' > "$QA/secrets/access-token"
+  printf 'Authorization: Bearer %s\n' "$(cat "$QA/secrets/access-token")" > "$QA/auth-header" )
 # The image runs as UID 1000; a different host UID (CI runners) needs a
 # readable throwaway token.
-if [ "$(id -u)" != 1000 ]; then chmod 755 "$QA"; chmod 644 "$QA/access-token"; fi
+if [ "$(id -u)" != 1000 ]; then chmod 755 "$QA" "$QA/secrets"; chmod 644 "$QA/secrets/access-token"; fi
 cat > "$QA/backends.json" <<'EOF'
 { "backends": [ { "id": "fake-command", "type": "command-json", "executable": "/usr/local/bin/node",
   "args": ["/opt/omp-orchestrator/fixtures/command-json-fake.mjs", "success"] } ] }
@@ -66,7 +66,7 @@ services:
     environment: { OMP_ORCHESTRATOR_BACKENDS_FILE: /run/omp-orchestrator/backends.json }
     volumes: [ "$QA/backends.json:/run/omp-orchestrator/backends.json:ro" ]
 EOF
-export OMP_ORCHESTRATOR_HOST_PORT="$PORT" OMP_ORCHESTRATOR_TOKEN_FILE="$QA/access-token" \
+export OMP_ORCHESTRATOR_HOST_PORT="$PORT" OMP_ORCHESTRATOR_TOKEN_DIR="$QA/secrets" \
   OMP_ORCHESTRATOR_PUBLIC_ORIGIN="http://127.0.0.1:$PORT"
 
 dc() { docker compose -p "$PROJECT" -f "$REPO/compose.yaml" -f "$QA/override.yaml" "$@"; }
@@ -155,8 +155,8 @@ docker run --rm -v "$RESTORE_VOLUME:/restore-parent" -v "$QA/pre-upgrade:/backup
   --runtime-state /var/lib/omp-orchestrator/state >/dev/null
 docker run -d --name "$RESTORED" --read-only --tmpfs /tmp --security-opt no-new-privileges:true \
   -p "127.0.0.1:$RESTORE_PORT:8080" -v "$RESTORE_VOLUME:/var/lib/omp-orchestrator" \
-  -v "$QA/access-token:/run/omp-orchestrator/access-token:ro" \
-  -e OMP_ORCHESTRATOR_ACCESS_TOKEN_FILE=/run/omp-orchestrator/access-token \
+  -v "$QA/secrets:/run/omp-orchestrator/secrets:ro" \
+  -e OMP_ORCHESTRATOR_ACCESS_TOKEN_FILE=/run/omp-orchestrator/secrets/access-token \
   -e OMP_ORCHESTRATOR_PUBLIC_ORIGIN="$rbase" "$OLD_IMAGE" >/dev/null
 check "restored old copy ready" wait_ready "$rbase"
 check "restored schema back to $old_schema" test "$(schema "$rbase")" = "$old_schema"

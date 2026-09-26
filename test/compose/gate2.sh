@@ -27,11 +27,11 @@ pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; exit 1; }
 
 export OMP_GATE2_PORT="$PORT" OMP_GATE2_ORIGIN="http://127.0.0.1:$PORT" \
-  OMP_GATE2_TOKEN_FILE="$QA/access-token" OMP_GATE2_BACKENDS="$QA/backends.json"
+  OMP_GATE2_TOKEN_DIR="$QA/secrets" OMP_GATE2_BACKENDS="$QA/backends.json"
 dc() { docker compose -p "$PROJECT" -f "$REPO/test/compose/gate2.yaml" -f "$QA/logins.yaml" "$@"; }
 
 if [ "${1:-}" = down ]; then
-  mkdir -p "$QA"; : > "$QA/access-token"; : > "$QA/backends.json"; echo "services: {}" > "$QA/logins.yaml"
+  mkdir -p "$QA/secrets"; : > "$QA/backends.json"; echo "services: {}" > "$QA/logins.yaml"
   dc down -v >/dev/null 2>&1 || true
   rm -rf "$QA"
   echo "gate2 down"
@@ -42,11 +42,11 @@ fi
 [ -f "$OMP_HOME/agent.db" ] || fail "sem agent.db em $OMP_HOME"
 [ -d "$CLIS/bin" ] || fail "sem CLIs em $CLIS/bin"
 
-mkdir -p "$QA"; chmod 700 "$QA"
+mkdir -p "$QA/secrets"; chmod 700 "$QA"; chmod 755 "$QA/secrets"
 umask 077
-openssl rand -base64 48 | tr -d '\n' > "$QA/access-token"
-chmod 0644 "$QA/access-token"   # descartável; o container (UID 1000) precisa ler
-printf 'Authorization: Bearer %s\n' "$(cat "$QA/access-token")" > "$QA/auth-header"
+openssl rand -base64 48 | tr -d '\n' > "$QA/secrets/access-token"
+chmod 0644 "$QA/secrets/access-token"   # descartável; o container (UID 1000) precisa ler
+printf 'Authorization: Bearer %s\n' "$(cat "$QA/secrets/access-token")" > "$QA/auth-header"
 # backends.json usa /home/node como marcador do HOME do usuário.
 sed "s|/home/node|$HOME|g" "$REPO/test/compose/gate2.backends.json" > "$QA/backends.json"; chmod 0644 "$QA/backends.json"
 
@@ -105,7 +105,7 @@ done
 [ "$code" = 200 ] || fail "readyz $code"
 pass "readyz 200"
 [ -z "$(dc exec -T orchestrator sh -c "ls -A '$HOME' /home/node/.omp 2>/dev/null")" ] || fail "credencial visível no serviço HTTP"
-dc exec -T agent-worker test ! -e /run/omp-orchestrator/access-token || fail "token HTTP visível no sidecar"
+dc exec -T agent-worker test ! -e /run/omp-orchestrator/secrets || fail "token HTTP visível no sidecar"
 pass "credenciais só no sidecar, token só no HTTP"
 
 if [[ " $ONLY " == *" real-rpc "* ]]; then
