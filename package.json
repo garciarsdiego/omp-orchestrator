@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "test": "node --test",
+    "lint": "eslint",
     "smoke": "node scripts/smoke.mjs",
     "migrate:json": "node scripts/migrate-json.mjs",
     "serve": "node bin/omp-orchestrator.mjs serve"
@@ -26,5 +27,9 @@
     "@modelcontextprotocol/node": "^2.1.0",
     "@modelcontextprotocol/server": "^2.1.0",
     "better-sqlite3": "^12.4.1"
+  },
+  "devDependencies": {
+    "eslint": "10.11.0",
+    "globals": "17.12.0"
   }
 }
