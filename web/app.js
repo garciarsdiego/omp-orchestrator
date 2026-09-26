@@ -112,8 +112,11 @@ async function connect(raw) {
     const backends = await call("omp_agent_backends");
     $("agent-backend").replaceChildren(...backends.map((backend) => {
       const option = document.createElement("option");
+      const profile = backend.profile ? ` · ${backend.profile}` : "";
+      const usage = backend.capabilities?.usageReported === true ? "" : " · sem uso";
       option.value = backend.id;
-      option.textContent = `${backend.id} · ${backend.type}`;
+      option.textContent = `${backend.id} · ${backend.type}${profile}${usage}`;
+      option.title = backend.capabilities?.cacheBehavior || "";
       return option;
     }));
     $("tool-name").replaceChildren(...tools.map((tool) => {

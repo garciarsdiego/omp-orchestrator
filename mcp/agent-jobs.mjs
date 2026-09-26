@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { cliCapabilities } from "./backends/cli-profiles.mjs";
 import { workerProcess } from "./process-identity.mjs";
 import { assertNoSecrets } from "./security.mjs";
 import { JOB_ROOT, newJobId, readJob, writeJob, updateJob } from "./job-store.mjs";
@@ -44,13 +45,62 @@ function configuration() {
   return { backends, digest: createHash("sha256").update(text).digest("hex") };
 }
 
+const CLI_CAPABILITIES = Object.fromEntries(cliCapabilities().map((entry) => [entry.profile, entry]));
+
+function adapterProfileFromArgs(args = []) {
+  const index = args.findIndex((arg) => typeof arg === "string" && arg.endsWith("agent-cli-adapter.mjs"));
+  const candidate = index >= 0 ? args[index + 1] : null;
+  return typeof candidate === "string" && Object.hasOwn(CLI_CAPABILITIES, candidate) ? candidate : null;
+}
+
 export function listAgentBackends() {
-  return configuration().backends.map(({ id, type }) => ({
-    id, type, capabilities: {
+  return configuration().backends.map((entry) => {
+    const { id, type } = entry;
+    const configuredProfile = adapterProfileFromArgs(entry.args);
+    const capabilities = {
       steer: type === "omp-rpc", abort: true, sessionEvents: type === "omp-rpc",
       tokenLimitEnforced: false, providerCostKnown: false
+    };
+    if (type === "omp-rpc") {
+      return {
+        id, type,
+        capabilities: {
+          ...capabilities,
+          usageReported: true,
+          usageSemantics: "omp-message-end",
+          usageIncludes: ["input", "output", "cacheRead", "cacheWrite", "totalTokens"],
+          cacheBehavior: "assistant message_end frames only, deduplicated by messageId; aborted/error zero-usage messages count as unreported",
+          promptDelivery: "RPC prompt command in the job workspace",
+          usageUnknownAs: "null (never zero)"
+        }
+      };
     }
-  }));
+    if (!configuredProfile) {
+      return {
+        id, type,
+        capabilities: {
+          ...capabilities,
+          usageReported: false,
+          usageSemantics: "operator-command-json",
+          usageIncludes: [],
+          cacheBehavior: "depends on the operator command: only usage the command reports is recorded",
+          promptDelivery: "stdin",
+          usageUnknownAs: "null (never zero)"
+        }
+      };
+    }
+    const profile = CLI_CAPABILITIES[configuredProfile];
+    return {
+      id, type, profile: configuredProfile,
+      capabilities: {
+        ...capabilities,
+        usageReported: profile.usageReported, usageSemantics: profile.usageSemantics,
+        usageIncludes: profile.usageIncludes, cacheBehavior: profile.cacheBehavior,
+        promptDelivery: profile.promptDelivery, usageUnknownAs: profile.usageUnknownAs,
+        adapter: "scripts/agent-cli-adapter.mjs"
+      }
+    };
+  });
 }
 
 export function resolveBackend(id, digest) {

@@ -7,6 +7,13 @@
 // 2026-09-26: codex-cli 0.155.1, Claude Code 2.1.280, droid 0.209.1,
 // cursor-agent 2026.09.26, grok 1.0.41, devin 3000.1.27, Muse Code 1.3.0.
 // A CLI update can change them; parsers fail loudly rather than guess.
+//
+// Normalized usage is always { input_tokens, input_tokens_details.cached_tokens,
+// output_tokens, total_tokens }: input_tokens is the full prompt occupancy and
+// cached_tokens partitions it (Anthropic-style CLIs report cache as separate
+// exclusive counters that are summed in; cursor-agent reports inputTokens as the
+// full prompt with cacheRead/cacheWrite partitioning it, so the normalized total
+// does not double-count cache).
 
 const n = (value) => (Number.isFinite(value) && value >= 0 ? value : 0);
 
@@ -43,6 +50,20 @@ function exclusiveCacheUsage(raw, extra = {}) {
 
 function modelsFrom(modelUsage) {
   return modelUsage && typeof modelUsage === "object" ? Object.keys(modelUsage).map((key) => key.slice(0, 160)) : [];
+}
+
+/** Capability facts for one CLI adapter profile, shown by omp_agent_backends. */
+function profileCapabilities(name) {
+  const facts = {
+    codex: { usageReported: true, usageSemantics: "openai-inclusive-cache", usageIncludes: ["input_tokens", "cached_input_tokens", "output_tokens"], cacheBehavior: "input_tokens already includes cached input; reported per completed turn", promptDelivery: "stdin", usageUnknownAs: "missing turns fail loudly (never zero)" },
+    claude: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "cache reads/writes are exclusive of input_tokens and are summed into the normalized input total", promptDelivery: "stdin", usageUnknownAs: "unknown stays omitted (never zero)" },
+    droid: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "same exclusive-cache sum as the other Anthropic-style CLIs", promptDelivery: "private temp file", usageUnknownAs: "unknown stays omitted (never zero)" },
+    cursor: { usageReported: true, usageSemantics: "cursor-inclusive-cache-partition", usageIncludes: ["inputTokens", "cacheReadTokens", "cacheWriteTokens", "outputTokens"], cacheBehavior: "inputTokens is the full prompt; cacheReadTokens/cacheWriteTokens partition it (inputTokens - cacheReadTokens - cacheWriteTokens = uncached input); independent pi-cursor-sdk observation, vendor docs do not define it", promptDelivery: "argv (visible in the local process list while running)", usageUnknownAs: "unknown stays omitted (never zero)" },
+    grok: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "cache reads/writes are exclusive of input_tokens and are summed into the normalized input total", promptDelivery: "argv (visible in the local process list while running)", usageUnknownAs: "unknown stays omitted (never zero)" },
+    devin: { usageReported: false, usageSemantics: "plain-text-only", usageIncludes: [], cacheBehavior: "no token usage reported", promptDelivery: "private temp file", usageUnknownAs: "null (not zero)" },
+    muse: { usageReported: false, usageSemantics: "terminal-event-only", usageIncludes: [], cacheBehavior: "no token usage reported", promptDelivery: "private temp file", usageUnknownAs: "null (not zero)" }
+  };
+  return facts[name] || { usageReported: false, usageSemantics: "unknown", usageIncludes: [], cacheBehavior: "unknown", promptDelivery: "unknown", usageUnknownAs: "null (not zero)" };
 }
 
 function cost(value) {
@@ -120,14 +141,24 @@ export const CLI_PROFILES = {
     parse(stdout) {
       const doc = resultDocument(stdout, "cursor-agent");
       const raw = doc.usage;
+      if (!raw) return { output: doc.result, usage: null, events: [{ type: "cursor.result" }] };
+      // Cursor observation (pi-cursor-sdk 0.1.62, vendor docs silent):
+      // inputTokens is the full prompt; cacheRead/cacheWrite partition it.
+      // Normalized input_tokens keeps the full prompt; cached_tokens partitions
+      // it; total_tokens never double-counts cache.
+      const input = n(raw.inputTokens);
+      const cached = n(raw.cacheReadTokens) + n(raw.cacheWriteTokens);
+      const output = n(raw.outputTokens);
       return {
         output: doc.result,
-        // Field semantics are undocumented; cache counts are assumed to be
-        // exclusive of inputTokens, as in the other Anthropic-style CLIs.
-        usage: raw ? exclusiveCacheUsage({
-          input_tokens: raw.inputTokens, output_tokens: raw.outputTokens,
-          cache_read_input_tokens: raw.cacheReadTokens, cache_creation_input_tokens: raw.cacheWriteTokens
-        }, { source: "cursor-agent", normalization: "assumed-exclusive-cache" }) : null,
+        usage: {
+          input_tokens: input,
+          input_tokens_details: { cached_tokens: Math.min(cached, input) },
+          output_tokens: output,
+          total_tokens: input + output,
+          source: "cursor-agent",
+          normalization: "cursor-inclusive-cache-partition"
+        },
         events: [{ type: "cursor.result" }]
       };
     }
@@ -187,4 +218,12 @@ export function cliProfile(name) {
   const profile = Object.hasOwn(CLI_PROFILES, name) ? CLI_PROFILES[name] : null;
   if (!profile) throw new Error(`Unknown agent CLI profile: ${name}. Known: ${Object.keys(CLI_PROFILES).join(", ")}.`);
   return profile;
+}
+
+export function cliProfileCapabilities(name) {
+  return { profile: name, ...profileCapabilities(name) };
+}
+
+export function cliCapabilities() {
+  return Object.keys(CLI_PROFILES).map((name) => cliProfileCapabilities(name));
 }

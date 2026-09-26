@@ -90,6 +90,17 @@ test("workspace names cannot traverse or resolve outside the configured root", (
     timeoutMs: 10_000, idempotencyKey: "test-invalid-1", confirmQuota: "true" }), /confirmQuota/);
 });
 
+test("backend report declares usage and cache semantics without implying cost", () => {
+  const byId = Object.fromEntries(jobs.listAgentBackends().map((backend) => [backend.id, backend]));
+  assert.equal(byId["omp-rpc"].capabilities.usageSemantics, "omp-message-end");
+  assert.equal(byId["fake-command"].capabilities.usageSemantics, "operator-command-json");
+  assert.equal(byId["fake-command"].capabilities.usageUnknownAs, "null (never zero)");
+  assert.equal(byId["fake-command"].capabilities.tokenLimitEnforced, false);
+  assert.equal(byId["fake-command"].capabilities.providerCostKnown, false);
+  assert.equal(byId["fake-rpc"].capabilities.steer, true);
+  assert.equal(byId["fake-command"].capabilities.steer, false);
+});
+
 test("startup reconciliation does not replay an interrupted agent request", async () => {
   const store = jobs.createAgentJob({ backend: "fake-command", workspace: "project-d", prompt: "hello",
     timeoutMs: 10_000, idempotencyKey: "test-recovery-001", confirmQuota: true });
