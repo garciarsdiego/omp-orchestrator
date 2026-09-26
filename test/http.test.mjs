@@ -130,4 +130,9 @@ test("stand-alone HTTP exposes authenticated API and modern MCP on the same core
   } while (Date.now() < deadline);
   assert.equal(job.status, "succeeded", JSON.stringify(job));
   assert.equal((await call("omp_agent_result", { id: created.id })).output, "received:hello-http");
+  const overview = await fetch(`${base}/api/overview`, { headers });
+  assert.equal(overview.status, 200, await overview.clone().text());
+  const lists = await overview.json();
+  assert.ok(lists.agents.some((agent) => agent.id === created.id));
+  assert.ok(lists.jobs.some((entry) => entry.id === created.id));
 });

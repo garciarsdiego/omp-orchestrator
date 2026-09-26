@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { getModels, getRoles } from "./lib.mjs";
 import { parseRoleSelector } from "./gateway.mjs";
 import {
-  getJobAttempts, newJobId, publicJob, readJob, updateJob, writeJob
+  getJobAttempts, listJobs, newJobId, publicJob, readJob, updateJob, writeJob
 } from "./job-store.mjs";
 import { getDatabase, withImmediateTransaction } from "./storage.mjs";
 import { runtimeStatus } from "./runtime.mjs";
