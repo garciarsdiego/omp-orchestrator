@@ -6,6 +6,8 @@
 #   test/compose/gate2.sh                # sobe, roda os 8 motores, derruba
 #   ONLY="real-rpc real-cursor" test/compose/gate2.sh
 #   KEEP=1 test/compose/gate2.sh         # deixa o stack de pé
+#   OMP_GATE2_ENV_FILE=/mnt/c/Users/me/.omp/agent/.env test/compose/gate2.sh
+#       (só os nomes em ENGINE_KEYS são lidos dele, para o sidecar)
 #   test/compose/gate2.sh down
 set -euo pipefail
 
@@ -17,6 +19,8 @@ CLIS="${OMP_GATE2_CLIS:-$HOME/.local}"
 QA="${QA_DIR:-$(mktemp -d -t omp-gate2.XXXXXX)}"
 ALL="real-rpc real-codex real-claude real-droid real-cursor real-grok real-devin real-muse"
 ONLY="${ONLY:-$ALL}"
+# Chaves de motor aceitas por nome; o catálogo só lista nomes (envInherit).
+ENGINE_KEYS="FACTORY_API_KEY"
 
 step() { printf '\n== %s\n' "$*"; }
 pass() { echo "PASS $*"; }
@@ -62,6 +66,9 @@ sed "s|/home/node|$HOME|g" "$REPO/test/compose/gate2.backends.json" > "$QA/backe
   # extrai o addon nativo em ~/.omp/natives e o carrega (exec).
   echo "      - \"$HOME/.omp:uid=1000,gid=1000,mode=0700,exec\""
   echo "      - \"$HOME/.config:uid=1000,gid=1000,mode=0700\""
+  if [ -n "${OMP_GATE2_ENV_FILE:-}" ]; then
+    echo "    env_file: [ \"$QA/engines.env\" ]"
+  fi
   echo "    volumes:"
   echo "      - \"$OMP_HOME:$HOME/.omp/agent:rw\""
   # Devin e Muse gravam logs/locks em ~/.local; ele fica rw (fronteira de confiança, decisão 11).
@@ -70,6 +77,12 @@ sed "s|/home/node|$HOME|g" "$REPO/test/compose/gate2.backends.json" > "$QA/backe
     if [ -e "$HOME/$login" ]; then echo "      - \"$HOME/$login:$HOME/$login:rw\""; else echo "    # ausente: ~/$login" >&2; fi
   done
 } > "$QA/logins.yaml"
+if [ -n "${OMP_GATE2_ENV_FILE:-}" ]; then
+  [ -r "$OMP_GATE2_ENV_FILE" ] || fail "OMP_GATE2_ENV_FILE ilegível"
+  # Filtra por nome; valores não são impressos. O arquivo some com o QA.
+  grep -E "^($(echo "$ENGINE_KEYS" | tr ' ' '|'))=" "$OMP_GATE2_ENV_FILE" | tr -d '' > "$QA/engines.env" || true
+  echo "chaves de motor: $(cut -d= -f1 "$QA/engines.env" | paste -sd' ')"
+fi
 
 base="http://127.0.0.1:$PORT"
 call() { curl -s -H @"$QA/auth-header" -H 'Content-Type: application/json' -X POST "$base/api/call" -d "$1"; }
