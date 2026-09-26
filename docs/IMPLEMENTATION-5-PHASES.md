@@ -69,3 +69,54 @@ Tags locais criadas: `omp-orchestrator:handoff-2c4d818` e `omp-orchestrator:hand
 **Não validado nesta rodada:** Compose com dois serviços, backup/restore, browser/console visual, prompt OMP real, VPS, TLS e CI remoto (sem push). Nenhuma credencial, quota, deploy ou publicação foi usada.
 
 **Gates restantes (inalterados):** prompt OMP real com limite aprovado; TLS e VPS reais; isolamento para workloads não confiáveis. Nenhum deles foi declarado concluído.
+
+### `32d993e` — ci: lint `no-undef`
+
+- **Por quê:** a regressão de `listJobs` passou pela suíte inteira porque nenhum teste chamava `omp_job_list`.
+- **Como:** `eslint.config.mjs` aplica apenas `no-undef`, sem regras de estilo:
+  - `.mjs` com globals de Node;
+  - `web/**/*.js` com globals de browser.
+- **Dependências:** `eslint@10.11.0` e `globals@17.12.0`, como devDependencies com versão exata. A imagem usa `npm ci --omit=dev`, então elas não entram nela. `npm pack --dry-run` não inclui a configuração.
+- **CI:** o job `node` roda `npm run lint` antes de `npm test`.
+- **Prova:** `git show 75cf897:mcp/jobs.mjs | npx eslint --stdin --stdin-filename mcp/jobs.mjs` acusa `'listJobs' is not defined` com exit 1. O HEAD passa limpo. `npm audit` retornou 0 vulnerabilidades.
+
+### Estabilidade e Compose local em 26/09 (sem mudança de código)
+
+| Verificação | Resultado |
+|---|---|
+| Suíte completa em laço, imagem Linux `handoff-7fbb03c` | 20/20 execuções sem falha |
+| Suíte completa em laço, Windows | 10/10 execuções sem falha |
+| Compose de dois serviços em loopback (`-p omp-handoff-qa`, porta 18180), imagem do HEAD, token de teste 0600 enviado por arquivo de header | todos os checks abaixo passaram |
+
+Checks do Compose:
+
+- **Autenticação:**
+  - `healthz` 200;
+  - `readyz` 200 com token;
+  - `/api/overview` sem token → 401;
+  - sidecar sem arquivo de token;
+  - `omp/18.3.2` na imagem.
+- **Execução:**
+  - agent job `command-json` fake criado por HTTP e executado pelo sidecar, com `succeeded` e output esperado;
+  - job listado em `/api/overview`;
+  - a mesma `idempotencyKey` devolve o mesmo job.
+- **Reinício:** `docker compose restart` dos dois serviços. `readyz` volta e o job continua `succeeded`.
+- **Backup/restore:**
+  - artifact sintético de run gravado no CAS;
+  - `scripts/backup.mjs` gerou pacote com SQLite, manifest e o objeto;
+  - restauração em volume novo com `--runtime-state`, conforme `DEPLOY-VPS.md`;
+  - container restaurado (porta 18181) leu o resultado do job e o conteúdo do artifact.
+  - O `readyz` restaurado deu 200 porque esse container roda sem `AGENT_DISPATCH=external`, ou seja, em modo `local` (`agent-jobs.mjs:17`). É o comportamento esperado.
+- **Reinício com job em execução** (motor fake `hang`, `docker compose restart agent-worker`): 7/7 rodadas terminaram em `interrupted` sem replay. `omp_agent_abort` num job em execução → `cancelled`.
+
+Projetos, volumes e arquivos de QA foram removidos ao final. Ficam só as tags locais `omp-orchestrator:handoff-7fbb03c` e `omp-orchestrator:handoff-compose`.
+
+**Risco residual observado (RT-10, P2, aberto):**
+
+- A reconciliação do supervisor identifica o worker só pelo PID (`pidAlive`).
+- Na medição, o worker antigo tinha PID 14, e o PID 14 voltou a existir no container reiniciado segundos depois (processos de `docker exec`).
+- O teste passou porque o primeiro tick reconcilia antes de despachar novos workers.
+- Um PID reaproveitado no instante da reconciliação (healthcheck, `exec`) ainda pode manter um job `running` indefinidamente.
+- Correção sugerida: gravar a identidade do processo junto do PID, com `starttime` de `/proc/<pid>/stat` e o `boot_id` no Linux, e tratar divergência como processo morto. No Windows, manter o fallback atual. Não implementado nesta rodada.
+
+**Continua não validado:** console no browser, prompt OMP real, VPS/TLS e CI remoto.

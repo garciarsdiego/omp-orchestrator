@@ -14,16 +14,23 @@ O usuário confirmou os dois sentidos de integração (cliente e motor). O perfi
 - Commits novos, em ordem, sobre `75cf897217d372f7f495cabf864d4708ea0e71a2`:
   1. `2c4d818` `fix(jobs): restore listJobs import for job listing`
   2. `186a0de` `fix(storage): retry busy WAL setup during concurrent first init`
-  3. commit de documentação que acrescenta este arquivo e a seção de 26/09 em `docs/IMPLEMENTATION-5-PHASES.md` (veja `git log`).
+  3. `7fbb03c` `docs: record handoff round and verification evidence`
+  4. `32d993e` `ci: lint undefined references with eslint no-undef`
+  5. commit de documentação com o Compose local e a estabilidade da suíte (veja `git log`).
 - Worktree original: `C:\Users\Diego\Documents\ChatGPT\OMP-Orchestrator`, branch `codex/omp-five-phases`, HEAD `75cf897`. Continua suja e **não foi alterada**:
   - modificados: `mcp/jobs.mjs` e `test/http.test.mjs`. É a mesma correção de `listJobs`, agora coberta por `2c4d818`;
   - não rastreados: `docs/audit-2026-09-25/`, capturas `docs/console-*.png`, `docs/PROMPT-AGENT-EXTERNAL.md` e a versão anterior deste handoff.
 - Pacote `0.8.0-preview.1`. Fases e resultados estão em `docs/IMPLEMENTATION-5-PHASES.md`. Auditoria em `docs/audit-2026-09-25/AUDITORIA.md`, disponível **só na worktree original** porque não é rastreada. Deploy e limites em `docs/DEPLOY-VPS.md`.
-- Validado nesta rodada: Windows `npm test` com 94 testes, 92 passaram e 2 são específicos de Linux; imagem Linux 94/94 em três execuções; teste de inicialização concorrente 25/25 no Linux, contra 4/12 antes da correção. Detalhes em `IMPLEMENTATION-5-PHASES.md`.
-- Não validado nesta rodada: Compose de dois serviços, backup/restore, console no browser, prompt OMP real, VPS, TLS e CI remoto.
+- Validado em 26/09 (detalhes em `IMPLEMENTATION-5-PHASES.md`):
+  - suíte em laço: 20/20 no Linux (imagem) e 10/10 no Windows;
+  - teste de inicialização concorrente: 25/25 no Linux, contra 4/12 antes da correção;
+  - `npm run lint` limpo;
+  - Compose de dois serviços em loopback: autenticação, job fake no sidecar, idempotência, reinício, backup/restore com artifact em volume novo, reinício do sidecar com job em execução (7/7 `interrupted`, sem replay) e abort.
+- Não validado: console no browser, prompt OMP real, VPS, TLS e CI remoto (sem push).
+- RT-10 continua aberto. A reconciliação usa só o PID, e foi observado reuso de PID no container reiniciado. Veja a correção sugerida em `IMPLEMENTATION-5-PHASES.md`.
 - Pode haver um servidor de QA local em `127.0.0.1:18080`, iniciado em sessão interativa anterior. Não foi verificado nem encerrado.
 - Ao iniciar o WSL, containers `openbots-*` de outro projeto subiram por política de restart. Eles não pertencem a este repositório e não foram tocados.
-- Tags Docker locais criadas: `omp-orchestrator:handoff-2c4d818` e `omp-orchestrator:handoff-wip`. Podem ser removidas quando não forem mais úteis.
+- Tags Docker locais criadas: `omp-orchestrator:handoff-2c4d818`, `:handoff-wip`, `:handoff-7fbb03c` e `:handoff-compose`. Podem ser removidas quando não forem mais úteis. A tag `omp-orchestrator:local` da worktree original não foi sobrescrita, porque o QA usou override de imagem e projeto Compose próprios.
 - Nada foi publicado, enviado ao remoto, implantado ou cobrado. Não crie PR nem faça push sem autorização específica.
 
 ## Proteção de estado
@@ -46,9 +53,9 @@ Não implemente na worktree original. Continue em `codex/omp-handoff` ou crie ou
 1. Leia este handoff, `docs/IMPLEMENTATION-5-PHASES.md`, a auditoria (worktree original) e `docs/DEPLOY-VPS.md`. Não há `AGENTS.md` no repositório.
 2. Resultado anterior de "passou uma vez" não prova estabilidade em testes de concorrência. Repita testes de concorrência no Linux (imagem) antes de declará-los estáveis.
 3. Próximos passos sem credencial/deploy:
-   - repetir o Compose de dois serviços e o backup/restore com o HEAD novo;
-   - rodar a suíte em laço no Linux para achar outros testes intermitentes;
-   - considerar um lint `no-undef` no CI, porque a regressão de `listJobs` escapou da suíte.
+   - RT-10: identidade de processo (PID + `starttime`/`boot_id` no Linux) na reconciliação do supervisor e do recovery, com teste que simule PID reaproveitado;
+   - QA do console web no browser contra o Compose local;
+   - rodar os roteiros de QA do Compose como script versionado (hoje ficam fora do repositório; os passos estão descritos em `IMPLEMENTATION-5-PHASES.md`).
 4. Gates que exigem autorização explícita: prompt OMP real com limite aprovado, VPS e TLS reais, isolamento para workloads não confiáveis.
 5. Faça commits pequenos e convencionais, e atualize este arquivo e `IMPLEMENTATION-5-PHASES.md` a cada rodada.
 
