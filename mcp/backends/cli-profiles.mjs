@@ -10,10 +10,10 @@
 //
 // Normalized usage is always { input_tokens, input_tokens_details.cached_tokens,
 // output_tokens, total_tokens }: input_tokens is the full prompt occupancy and
-// cached_tokens partitions it (Anthropic-style CLIs report cache as separate
-// exclusive counters that are summed in; cursor-agent reports inputTokens as the
-// full prompt with cacheRead/cacheWrite partitioning it, so the normalized total
-// does not double-count cache).
+// cached_tokens partitions it. Anthropic-style CLIs and cursor-agent report
+// cache as separate exclusive counters that are summed in. For cursor-agent
+// this was measured, not assumed: a real run reported inputTokens 4 with
+// cacheReadTokens 26032 and cacheWriteTokens 9550.
 
 const n = (value) => (Number.isFinite(value) && value >= 0 ? value : 0);
 
@@ -58,7 +58,7 @@ function profileCapabilities(name) {
     codex: { usageReported: true, usageSemantics: "openai-inclusive-cache", usageIncludes: ["input_tokens", "cached_input_tokens", "output_tokens"], cacheBehavior: "input_tokens already includes cached input; reported per completed turn", promptDelivery: "argv (visible in the local process list while running)", usageUnknownAs: "missing turns fail loudly (never zero)" },
     claude: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "cache reads/writes are exclusive of input_tokens and are summed into the normalized input total", promptDelivery: "stdin", usageUnknownAs: "unknown stays omitted (never zero)" },
     droid: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "same exclusive-cache sum as the other Anthropic-style CLIs", promptDelivery: "private temp file", usageUnknownAs: "unknown stays omitted (never zero)" },
-    cursor: { usageReported: true, usageSemantics: "cursor-inclusive-cache-partition", usageIncludes: ["inputTokens", "cacheReadTokens", "cacheWriteTokens", "outputTokens"], cacheBehavior: "inputTokens is the full prompt; cacheReadTokens/cacheWriteTokens partition it (inputTokens - cacheReadTokens - cacheWriteTokens = uncached input); independent pi-cursor-sdk observation, vendor docs do not define it", promptDelivery: "argv (visible in the local process list while running)", usageUnknownAs: "unknown stays omitted (never zero)" },
+    cursor: { usageReported: true, usageSemantics: "cursor-exclusive-cache", usageIncludes: ["inputTokens", "cacheReadTokens", "cacheWriteTokens", "outputTokens"], cacheBehavior: "inputTokens is uncached input only; cacheReadTokens/cacheWriteTokens are exclusive and summed into the normalized input (measured on cursor-agent 2026.09.26; vendor docs do not define it)", promptDelivery: "argv (visible in the local process list while running)", usageUnknownAs: "unknown stays omitted (never zero)" },
     grok: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "cache reads/writes are exclusive of input_tokens and are summed into the normalized input total", promptDelivery: "argv (visible in the local process list while running)", usageUnknownAs: "unknown stays omitted (never zero)" },
     devin: { usageReported: false, usageSemantics: "plain-text-only", usageIncludes: [], cacheBehavior: "no token usage reported", promptDelivery: "private temp file", usageUnknownAs: "null (not zero)" },
     muse: { usageReported: false, usageSemantics: "terminal-event-only", usageIncludes: [], cacheBehavior: "no token usage reported", promptDelivery: "private temp file", usageUnknownAs: "null (not zero)" }
@@ -145,23 +145,14 @@ export const CLI_PROFILES = {
       const doc = resultDocument(stdout, "cursor-agent");
       const raw = doc.usage;
       if (!raw) return { output: doc.result, usage: null, events: [{ type: "cursor.result" }] };
-      // Cursor observation (pi-cursor-sdk 0.1.62, vendor docs silent):
-      // inputTokens is the full prompt; cacheRead/cacheWrite partition it.
-      // Normalized input_tokens keeps the full prompt; cached_tokens partitions
-      // it; total_tokens never double-counts cache.
-      const input = n(raw.inputTokens);
-      const cached = n(raw.cacheReadTokens) + n(raw.cacheWriteTokens);
-      const output = n(raw.outputTokens);
+      // Measured on a real run: inputTokens excludes cache, so the counters
+      // are summed like the Anthropic-style ones (see the header).
       return {
         output: doc.result,
-        usage: {
-          input_tokens: input,
-          input_tokens_details: { cached_tokens: Math.min(cached, input) },
-          output_tokens: output,
-          total_tokens: input + output,
-          source: "cursor-agent",
-          normalization: "cursor-inclusive-cache-partition"
-        },
+        usage: exclusiveCacheUsage({
+          input_tokens: raw.inputTokens, cache_read_input_tokens: raw.cacheReadTokens,
+          cache_creation_input_tokens: raw.cacheWriteTokens, output_tokens: raw.outputTokens
+        }, { source: "cursor-agent", normalization: "cursor-exclusive-cache" }),
         events: [{ type: "cursor.result" }]
       };
     }
