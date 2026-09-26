@@ -41,6 +41,8 @@ function resolveExecutable(executable, pathValue = process.env.PATH || "") {
   throw new Error("config.executable was not found on PATH.");
 }
 
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+
 function buildEnvironment(config) {
   const supplied = config.env || {};
   const allowlist = new Set(config.envAllowlist || []);
@@ -49,7 +51,14 @@ function buildEnvironment(config) {
     if (!allowlist.has(key)) throw new Error(`Environment variable is not allowlisted: ${key}.`);
     if (typeof value !== "string") throw new Error(`Environment variable ${key} must be a string.`);
   }
-  const inherited = ["PATH", "PATHEXT", "SystemRoot", "SYSTEMROOT", "ComSpec", "COMSPEC", "WINDIR"];
+  // envInherit names variables copied from the Orchestrator's own environment
+  // (e.g. USERPROFILE/HOME so an agent CLI finds its existing login). Only
+  // names live in the catalog; values never do.
+  const inheritNames = config.envInherit || [];
+  if (!Array.isArray(inheritNames) || !inheritNames.every((name) => typeof name === "string" && ENV_NAME.test(name))) {
+    throw new Error("config.envInherit must be an array of environment variable names.");
+  }
+  const inherited = ["PATH", "PATHEXT", "SystemRoot", "SYSTEMROOT", "ComSpec", "COMSPEC", "WINDIR", ...inheritNames];
   const env = {};
   for (const key of inherited) if (process.env[key]) env[key] = process.env[key];
   for (const key of allowlist) if (Object.hasOwn(supplied, key)) env[key] = supplied[key];
