@@ -1,0 +1,34 @@
+name: Verify preview
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  node:
+    name: Node 24 on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm pack --dry-run --json
+
+  image:
+    name: Linux image and isolated worker tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t omp-orchestrator:ci .
+      - run: docker run --rm omp-orchestrator:ci npm test
+      - name: Compose smoke (loopback, fake engines, throwaway token)
+        run: bash test/compose/smoke.sh

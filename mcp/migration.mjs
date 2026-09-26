@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { writeJob } from "./job-store.mjs";
-import { appendRunEvent, writeArtifact, writeRun } from "./run-store.mjs";
+import { writeArtifact, writeRun } from "./run-store.mjs";
 import { getDatabase } from "./storage.mjs";
 import { scanForSecrets } from "./security.mjs";
 
@@ -21,6 +21,22 @@ function runDirectories(directory) {
 
 function readJson(file) {
   return JSON.parse(readFileSync(file, "utf8"));
+}
+
+function importEvent(db, runId, event, index, fallbackAt) {
+  const sequence = Number.isSafeInteger(event.sequence) && event.sequence > 0 ? event.sequence : index + 1;
+  const at = typeof event.at === "string" ? event.at : fallbackAt;
+  const imported = { ...event, sequence, at };
+  const payload = JSON.stringify(imported);
+  const existing = db.prepare("SELECT payload FROM events WHERE run_id = ? AND sequence = ?").get(runId, sequence);
+  if (existing && existing.payload !== payload) {
+    throw new Error(`Legacy event conflict for run ${runId}, sequence ${sequence}.`);
+  }
+  if (!existing) {
+    db.prepare("INSERT INTO events(run_id, sequence, type, at, payload) VALUES (?, ?, ?, ?, ?)")
+      .run(runId, sequence, imported.type, at, payload);
+  }
+  return sequence;
 }
 
 export function inspectLegacyJson({ jobsDir, runsDir } = {}) {
@@ -72,15 +88,19 @@ export function migrateLegacyJson({ jobsDir, runsDir, apply = false } = {}) {
   db.transaction(() => {
     for (const item of inspected.jobs) writeJob(item.value);
     for (const item of inspected.runs) {
-      const imported = { ...item.run, eventCount: 0, artifacts: [] };
+      const maxSequence = item.events.reduce((max, event, index) => Math.max(
+        max,
+        Number.isSafeInteger(event.sequence) && event.sequence > 0 ? event.sequence : index + 1
+      ), 0);
+      const imported = {
+        ...item.run,
+        eventCount: Math.max(item.run.eventCount || 0, maxSequence),
+        artifacts: []
+      };
       writeRun(imported);
-      for (const event of item.events) {
-        const { type, sequence, at, ...data } = event;
-        appendRunEvent(imported.id, type, data);
-      }
+      item.events.forEach((event, index) => importEvent(db, imported.id, event, index, imported.updatedAt));
       const artifacts = item.artifacts.map((artifact) => writeArtifact(imported.id, artifact.name, artifact.content));
       if (artifacts.length) {
-        imported.eventCount = item.events.length;
         imported.artifacts = artifacts;
         writeRun(imported);
       }

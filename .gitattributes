@@ -1,0 +1,4 @@
+# Preserve upstream license text verbatim; its own formatting includes trailing spaces.
+licenses/OMP-THIRD-PARTY-NOTICES.txt -whitespace
+# Shell scripts run inside Linux/WSL; CRLF from a Windows checkout breaks bash.
+*.sh text eol=lf

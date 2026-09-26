@@ -4,6 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { ompExecutable, parseJsonOutput, runOmp } from "./lib.mjs";
+import { processAlive, processIdentity } from "./process-identity.mjs";
 
 const RUNTIME_DIR = path.join(os.tmpdir(), "omp-orchestrator");
 const STATE_FILE = path.join(RUNTIME_DIR, "runtime.json");
@@ -15,16 +16,6 @@ function readState() {
     return JSON.parse(readFileSync(STATE_FILE, "utf8"));
   } catch {
     return null;
-  }
-}
-
-function pidAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -62,8 +53,9 @@ function spawnOmp(args, env = process.env) {
   return child.pid;
 }
 
-function stopPid(pid) {
-  if (!pidAlive(pid)) return false;
+function stopPid(pid, identity) {
+  // A runtime PID from an old state file may now belong to another process.
+  if (!processAlive(pid, identity)) return false;
   if (process.platform === "win32") {
     spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
       stdio: "ignore",
@@ -79,19 +71,21 @@ export async function runtimeStatus() {
   const state = readState();
   const brokerPortOpen = await portOpen(BROKER);
   const gatewayPortOpen = await portOpen(GATEWAY);
+  const brokerAlive = processAlive(state?.brokerPid, state?.brokerIdentity);
+  const gatewayAlive = processAlive(state?.gatewayPid, state?.gatewayIdentity);
   return {
     managed: Boolean(state),
-    running: Boolean(state && pidAlive(state.brokerPid) && pidAlive(state.gatewayPid) && brokerPortOpen && gatewayPortOpen),
+    running: Boolean(state && brokerAlive && gatewayAlive && brokerPortOpen && gatewayPortOpen),
     broker: {
       url: `http://${BROKER.host}:${BROKER.port}`,
       pid: state?.brokerPid || null,
-      processAlive: pidAlive(state?.brokerPid),
+      processAlive: brokerAlive,
       portOpen: brokerPortOpen
     },
     gateway: {
       url: `http://${GATEWAY.host}:${GATEWAY.port}/v1`,
       pid: state?.gatewayPid || null,
-      processAlive: pidAlive(state?.gatewayPid),
+      processAlive: gatewayAlive,
       portOpen: gatewayPortOpen,
       bearerRequired: true
     },
@@ -126,7 +120,11 @@ export async function startRuntime({ confirm = false } = {}) {
     );
     await waitForPort(GATEWAY, true);
     mkdirSync(RUNTIME_DIR, { recursive: true });
-    writeFileSync(STATE_FILE, JSON.stringify({ brokerPid, gatewayPid, startedAt: new Date().toISOString() }), {
+    writeFileSync(STATE_FILE, JSON.stringify({
+      brokerPid, gatewayPid,
+      brokerIdentity: processIdentity(brokerPid), gatewayIdentity: processIdentity(gatewayPid),
+      startedAt: new Date().toISOString()
+    }), {
       encoding: "utf8",
       mode: 0o600
     });
@@ -142,8 +140,8 @@ export async function stopRuntime({ confirm = false } = {}) {
   if (!confirm) throw new Error("Runtime shutdown requires confirm=true.");
   const state = readState();
   if (!state) return { changed: false, ...(await runtimeStatus()) };
-  const gatewayStopped = stopPid(state.gatewayPid);
-  const brokerStopped = stopPid(state.brokerPid);
+  const gatewayStopped = stopPid(state.gatewayPid, state.gatewayIdentity);
+  const brokerStopped = stopPid(state.brokerPid, state.brokerIdentity);
   rmSync(STATE_FILE, { force: true });
   await waitForPort(GATEWAY, false).catch(() => {});
   await waitForPort(BROKER, false).catch(() => {});

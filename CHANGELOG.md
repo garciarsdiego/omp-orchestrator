@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.0-preview.2 — Unreleased
+
+- Fixed job listing (`/api/overview` returned HTTP 500), intermittent `SQLITE_BUSY` during concurrent first start, and an invalid console `pattern` that disabled client-side workspace validation.
+- Added process identity (Linux `/proc` start time, Windows start FILETIME): a reused PID no longer keeps a job running or receives a cancellation signal.
+- Review is client-neutral. Schema v3 migrates `awaiting_codex` to `awaiting_review`, and templates name the attestation node `review`. Legacy runs remain readable and reviewable.
+- The HTTP access token file accepts several named tokens, reloads without a restart and keeps the old tokens when a rewrite is invalid. Schema v4 records an audit event (actor, mechanism, operation, target, outcome) for every state-changing operation. Review attestations carry the actor.
+- Added authenticated `/metrics` (Prometheus text) and `/api/metrics` (JSON), plus the `omp_metrics` and `omp_audit_list` tools.
+- Added `test/compose/smoke.sh` (also in CI) and `test/compose/upgrade-rollback.sh`, which rehearses an upgrade, an image-only rollback and a restore of a pre-upgrade backup across a schema migration.
+- CI runs an ESLint `no-undef` check.
+- OMP RPC agent jobs record usage from assistant `message_end` frames (tokens, effective provider/model, OMP's API-equivalent estimate). Aborted messages with zero usage are recorded as unknown. Real OMP 18.3.2 sessions completed, accepted a steer and were aborted.
+- Added `scripts/agent-cli-adapter.mjs` with headless profiles for Codex, Claude Code, Droid, Cursor, Grok, Devin and Muse, and `envInherit` (variable names only) for `command-json` backends. Each CLI ran a real job end to end through the Orchestrator.
+
+## 0.8.0-preview.1 — Unreleased
+
+- Added a shared tool catalog served through MCP stdio, authenticated HTTP, and a JSON CLI.
+- Added OMP RPC agent jobs with session events, steer and abort, plus administrator-configured headless CLI backends.
+- Added a browser operations console and a pinned Linux/VPS image, Compose recipe, and online SQLite backup.
+- Bundled the pinned OMP release's MIT license and third-party notices alongside its binary.
+- Repaired concurrent state updates, migration startup, run budgets, retry accounting, provider selection, and exact-artifact review.
+- Split HTTP and agent execution into separate Compose containers so agent processes cannot mount the HTTP access token. Shared state and OMP credentials remain within one trusted team boundary.
+- Verified Windows tests (92 pass, two Linux-only skips), Linux image tests (94 pass), local Compose health/authentication, fake jobs across both containers, SQLite+CAS restore, and OMP 18.3.0/18.3.2 metadata-only RPC handshakes. Real provider execution and VPS/TLS remain unverified.
+
 ## 0.7.0 — Unreleased
 
 ### Added

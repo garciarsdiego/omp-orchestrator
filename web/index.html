@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>OMP Orchestrator · Console</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="masthead">
+      <div class="brand"><span class="brand-mark">O<span>↗</span></span><div><strong>OMP Orchestrator</strong><small>Console operacional</small></div></div>
+      <div class="header-actions"><span id="connection" class="connection">Desconectado</span><button id="disconnect" class="quiet" type="button" hidden>Desconectar</button></div>
+    </header>
+
+    <main>
+      <section class="intro">
+        <div><p class="eyebrow">WORKSPACE / OPERAÇÃO</p><h1>Runs, jobs e aprovações em um só lugar.</h1><p>Inspecione a execução e decida sobre os artefatos. Nada consome quota sem uma chamada confirmada.</p></div>
+        <button id="refresh" class="quiet" type="button" disabled>Atualizar agora <span aria-hidden="true">↻</span></button>
+      </section>
+
+      <section id="auth-panel" class="auth-card" aria-labelledby="auth-title">
+        <div><p class="eyebrow">ACESSO</p><h2 id="auth-title">Conectar à instalação</h2><p>Use o token configurado pelo operador. Ele fica apenas nesta aba e será perdido ao recarregar.</p></div>
+        <form id="auth-form"><label for="token">Token de acesso</label><div class="field-line"><input id="token" type="password" autocomplete="off" spellcheck="false" required minlength="32" placeholder="Cole o token desta instalação"><button type="submit">Conectar</button></div></form>
+      </section>
+
+      <div id="workspace" hidden>
+        <section class="metrics" aria-label="Resumo">
+          <article><span>Runs</span><strong id="metric-runs">—</strong><small>nos registros recentes</small></article>
+          <article><span>Aguardando revisão</span><strong id="metric-review">—</strong><small>artefatos para inspecionar</small></article>
+          <article><span>Jobs ativos</span><strong id="metric-active">—</strong><small>na fila ou em execução</small></article>
+          <article><span>Falhas recentes</span><strong id="metric-failed">—</strong><small>requerem investigação</small></article>
+        </section>
+
+        <div class="columns">
+          <section class="panel" aria-labelledby="runs-title"><div class="panel-heading"><div><p class="eyebrow">01 / EXECUÇÕES</p><h2 id="runs-title">Runs recentes</h2></div><span id="runs-count" class="counter">0</span></div><div id="runs-list" class="record-list"><p class="empty">Nenhuma run encontrada.</p></div></section>
+          <section class="panel" aria-labelledby="jobs-title"><div class="panel-heading"><div><p class="eyebrow">02 / CHAMADAS</p><h2 id="jobs-title">Jobs recentes</h2></div><span id="jobs-count" class="counter">0</span></div><div id="jobs-list" class="record-list"><p class="empty">Nenhum job encontrado.</p></div></section>
+        </div>
+
+        <section class="panel agents-panel" aria-labelledby="agents-title">
+          <div class="panel-heading"><div><p class="eyebrow">03 / MOTORES</p><h2 id="agents-title">Agentes</h2></div><span id="agents-count" class="counter">0</span></div>
+          <div class="agent-layout">
+            <form id="agent-form"><p class="panel-note">Inicie uma sessão OMP RPC ou uma CLI cadastrada pelo operador. O agente poderá usar ferramentas e quota até o limite de tempo.</p><label for="agent-backend">Motor</label><select id="agent-backend"></select><label for="agent-workspace">Workspace</label><input id="agent-workspace" required value="project" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"><label for="agent-prompt">Tarefa</label><textarea id="agent-prompt" required rows="5" placeholder="Descreva o trabalho e os critérios de aceite."></textarea><button type="submit">Criar job de agente <span aria-hidden="true">↗</span></button></form>
+            <div id="agents-list" class="record-list"><p class="empty">Nenhum agente executado.</p></div>
+          </div>
+        </section>
+
+        <div class="columns lower">
+          <section class="panel" aria-labelledby="tools-title"><div class="panel-heading"><div><p class="eyebrow">04 / CONTROLE</p><h2 id="tools-title">Ferramentas</h2></div></div><p class="panel-note">As mesmas operações disponíveis na CLI e no MCP. Chamadas que alteram estado ou usam quota exigem seus campos de confirmação.</p><form id="tool-form"><label for="tool-name">Operação</label><select id="tool-name"></select><label for="tool-args">Argumentos JSON</label><textarea id="tool-args" spellcheck="false" rows="7">{}</textarea><button type="submit">Executar operação <span aria-hidden="true">↗</span></button></form></section>
+          <section class="panel inspector" aria-labelledby="inspector-title"><div class="panel-heading"><div><p class="eyebrow">05 / EVIDÊNCIA</p><h2 id="inspector-title">Inspeção</h2></div><button id="doctor" class="quiet small" type="button">Diagnóstico OMP</button></div><p id="inspection-label" class="panel-note">Selecione uma run ou job para ver seus detalhes. Artefatos são mostrados como texto, sem execução no navegador.</p><pre id="inspection-output" tabindex="0">Nenhum item selecionado.</pre></section>
+        </div>
+      </div>
+      <p id="message" class="message" role="status" aria-live="polite"></p>
+    </main>
+    <footer>OMP Orchestrator <span>·</span> Controle local ou em VPS privada</footer>
+  </div>
+</body>
+</html>

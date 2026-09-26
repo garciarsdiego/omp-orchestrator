@@ -1,4 +1,4 @@
-import { getJobResult, createJob } from "./jobs.mjs";
+import { cancelJob, getJobResult, createJob, startJobWorker } from "./jobs.mjs";
 import { getRoles } from "./lib.mjs";
 import { normalizeOutput, parseRoleSelector } from "./gateway.mjs";
 import { actualUsageCost, estimateModelCost } from "./pricing.mjs";
@@ -9,9 +9,10 @@ import {
 import { getTemplate } from "./templates.mjs";
 import { validateStandaloneHtml } from "./validators.mjs";
 
-const id = process.argv[2];
-const mode = process.argv[3] || "initial";
-if (!id) process.exit(2);
+const invokedAsWorker = process.argv[1]?.endsWith("run-worker.mjs");
+const id = invokedAsWorker ? process.argv[2] : null;
+const mode = invokedAsWorker ? process.argv[3] || "initial" : "initial";
+if (invokedAsWorker && !id) process.exit(2);
 
 function nodeDefinition(run, nodeId) {
   return getTemplate(run.template).nodes.find((node) => node.id === nodeId);
@@ -30,32 +31,129 @@ function updateNode(nodeId, patch) {
 
 function promptTokens(prompt) { return Math.ceil(Buffer.byteLength(prompt) / 4); }
 
+function finiteLimit(value) {
+  if (value === null || value === undefined) return null;
+  return Number.isFinite(Number(value)) ? Number(value) : null;
+}
+
+export function completeRunForReview(runId, mutate) {
+  let committed = false;
+  updateRun(runId, (current) => {
+    if (current.status !== "running") return current;
+    committed = true;
+    return { ...mutate(current), status: "awaiting_review", workerPid: null };
+  });
+  return committed;
+}
+
+function activeReservations(run) {
+  return (run.nodes || []).reduce((totals, node) => {
+    if (!node.reservation || !["reserving", "running"].includes(node.status)) return totals;
+    for (const key of ["calls", "inputTokens", "outputTokens", "totalTokens", "highUsd"]) {
+      if (node.reservation[key] !== null && node.reservation[key] !== undefined && totals[key] !== null) {
+        totals[key] += node.reservation[key];
+      }
+    }
+    if (node.reservation.highUsd === null) totals.highUsd = null;
+    return totals;
+  }, { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, highUsd: 0 });
+}
+
+function budgetError(message) {
+  const error = new Error(message);
+  error.name = "BudgetExceededError";
+  return error;
+}
+
 function assertBudget(run, selector, prompt, maxOutputTokens) {
   if (run.deadlineAt && Date.now() >= Date.parse(run.deadlineAt)) {
-    const error = new Error("Run duration budget has expired.");
-    error.name = "BudgetExceededError";
-    throw error;
+    throw budgetError("Run duration budget has expired.");
   }
   const expectedInput = promptTokens(prompt);
   const expectedTokens = expectedInput + maxOutputTokens;
-  if (run.usage.totalTokens + expectedTokens > run.budget.maxTotalTokens) {
-    const error = new Error("Projected job exceeds the run token budget.");
-    error.name = "BudgetExceededError";
-    throw error;
+  const reserved = activeReservations(run);
+  if (finiteLimit(run.budget.maxTotalTokens) !== null && run.usage.totalTokens + reserved.totalTokens + expectedTokens > run.budget.maxTotalTokens) {
+    throw budgetError("Projected job exceeds the run token budget.");
   }
-  if (run.usage.calls + 1 > run.budget.maxCalls) {
-    const error = new Error("Projected job exceeds the run call budget.");
-    error.name = "BudgetExceededError";
-    throw error;
+  if (finiteLimit(run.budget.maxCalls) !== null && run.usage.calls + reserved.calls + 1 > run.budget.maxCalls) {
+    throw budgetError("Projected job exceeds the run call budget.");
   }
   if (run.budget.costPolicy === "enforce") {
     const projected = estimateModelCost(selector, { inputTokens: expectedInput, outputTokens: maxOutputTokens });
-    if (projected.highUsd === null || run.usage.apiEquivalentHighUsd + projected.highUsd > run.budget.maxApiEquivalentUsd) {
-      const error = new Error("Projected job exceeds or cannot satisfy the enforced USD-equivalent budget.");
-      error.name = "BudgetExceededError";
-      throw error;
+    if (
+      projected.highUsd === null || reserved.highUsd === null || run.usage.apiEquivalentHighUsd === null
+      || run.usage.apiEquivalentHighUsd + reserved.highUsd + projected.highUsd > run.budget.maxApiEquivalentUsd
+    ) {
+      throw budgetError("Projected job exceeds or cannot satisfy the enforced USD-equivalent budget.");
     }
   }
+}
+
+function reservationFor(selector, prompt, maxOutputTokens) {
+  const inputTokens = promptTokens(prompt);
+  const cost = estimateModelCost(selector, { inputTokens, outputTokens: maxOutputTokens });
+  return {
+    calls: 1,
+    inputTokens,
+    outputTokens: maxOutputTokens,
+    totalTokens: inputTokens + maxOutputTokens,
+    highUsd: cost.highUsd,
+    createdAt: new Date().toISOString()
+  };
+}
+
+export function reserveRunBudget(run, selector, prompt, maxOutputTokens) {
+  assertBudget(run, selector, prompt, maxOutputTokens);
+  return reservationFor(selector, prompt, maxOutputTokens);
+}
+
+function budgetForReservedNode(run, reservation) {
+  const reserved = activeReservations(run);
+  const others = {
+    calls: reserved.calls - reservation.calls,
+    inputTokens: reserved.inputTokens - reservation.inputTokens,
+    outputTokens: reserved.outputTokens - reservation.outputTokens,
+    totalTokens: reserved.totalTokens - reservation.totalTokens,
+    highUsd: reserved.highUsd === null ? null : reserved.highUsd - (reservation.highUsd || 0)
+  };
+  const remaining = (name, used, reserve) => {
+    const limit = finiteLimit(run.budget[name]);
+    return limit === null ? undefined : Math.max(0, limit - used - reserve);
+  };
+  return {
+    ...run.budget,
+    maxCalls: remaining("maxCalls", run.usage.calls, others.calls),
+    maxInputTokens: remaining("maxInputTokens", run.usage.inputTokens, others.inputTokens),
+    maxOutputTokens: remaining("maxOutputTokens", run.usage.outputTokens, others.outputTokens),
+    maxTotalTokens: remaining("maxTotalTokens", run.usage.totalTokens, others.totalTokens),
+    maxDurationMs: Math.max(0, Date.parse(run.deadlineAt) - Date.now()),
+    maxApiEquivalentUsd: run.budget.costPolicy === "disabled" ? null : remaining("maxApiEquivalentUsd", run.usage.apiEquivalentHighUsd || 0, others.highUsd || 0)
+  };
+}
+
+export function accumulateRunUsage(totals, result, { costDisabled = false } = {}) {
+  // A completed job consumed one call even when a backend cannot report token
+  // telemetry. Keep tokens/cost unknown rather than manufacturing zero usage.
+  totals.calls++;
+  if (!result.usage) {
+    if (!costDisabled) {
+      totals.apiEquivalentLowUsd = null;
+      totals.apiEquivalentHighUsd = null;
+    }
+    return totals;
+  }
+  totals.inputTokens += result.usage.input_tokens || 0;
+  totals.cachedInputTokens += result.usage.input_tokens_details?.cached_tokens || 0;
+  totals.outputTokens += result.usage.output_tokens || 0;
+  totals.totalTokens += result.usage.total_tokens || 0;
+  if (!costDisabled) {
+    const cost = actualUsageCost(result.selector, result.usage);
+    totals.apiEquivalentLowUsd = totals.apiEquivalentLowUsd === null || cost.lowUsd === null
+      ? null : totals.apiEquivalentLowUsd + cost.lowUsd;
+    totals.apiEquivalentHighUsd = totals.apiEquivalentHighUsd === null || cost.highUsd === null
+      ? null : totals.apiEquivalentHighUsd + cost.highUsd;
+  }
+  return totals;
 }
 
 function refreshUsage() {
@@ -76,20 +174,17 @@ function refreshUsage() {
     seen.add(node.jobId);
     let result;
     try { result = getJobResult({ id: node.jobId, jobRoot: runJobsDir(id) }); } catch { continue; }
-    if (!result.usage) continue;
-    totals.calls++;
-    totals.inputTokens += result.usage.input_tokens || 0;
-    totals.cachedInputTokens += result.usage.input_tokens_details?.cached_tokens || 0;
-    totals.outputTokens += result.usage.output_tokens || 0;
-    totals.totalTokens += result.usage.total_tokens || 0;
-    if (!costDisabled) {
-      const cost = actualUsageCost(result.selector, result.usage);
-      totals.apiEquivalentLowUsd += cost.lowUsd || 0;
-      totals.apiEquivalentHighUsd = totals.apiEquivalentHighUsd === null || cost.highUsd === null ? null : totals.apiEquivalentHighUsd + cost.highUsd;
-    }
+    accumulateRunUsage(totals, result, { costDisabled });
   }
+  const breaches = [];
+  if (finiteLimit(run.budget.maxCalls) !== null && totals.calls > run.budget.maxCalls) breaches.push("maxCalls");
+  if (finiteLimit(run.budget.maxTotalTokens) !== null && totals.totalTokens > run.budget.maxTotalTokens) breaches.push("maxTotalTokens");
+  if (run.deadlineAt && Date.now() > Date.parse(run.deadlineAt)) breaches.push("maxDurationMs");
+  if (run.budget.costPolicy === "enforce" && (
+    totals.apiEquivalentHighUsd === null || totals.apiEquivalentHighUsd > run.budget.maxApiEquivalentUsd
+  )) breaches.push(totals.apiEquivalentHighUsd === null ? "priceUnknown" : "maxApiEquivalentUsd");
   updateRun(id, (current) => ({ ...current, usage: totals }));
-  return totals;
+  return { totals, breaches };
 }
 
 async function waitForJob(jobId) {
@@ -104,6 +199,7 @@ async function waitForJob(jobId) {
 
 async function startNode(nodeId, role, contract, prompt, maxOutputTokens, timeoutMs = 1_200_000) {
   let run = readRun(id);
+  if (run.status !== "running") throw new Error(`Run cannot start a node from ${run.status}.`);
   const existing = nodeState(run, nodeId);
   if (existing?.jobId) {
     appendRunEvent(id, "node.resumed", { node: nodeId, jobId: existing.jobId });
@@ -114,11 +210,42 @@ async function startNode(nodeId, role, contract, prompt, maxOutputTokens, timeou
   if (!selector) throw new Error(`Run role is not configured: ${role}`);
   const compatibility = routingCompatibility(selector, contract);
   if (!compatibility.allowed) throw new Error(compatibility.reason);
-  assertBudget(run, selector, prompt, maxOutputTokens);
-  const created = await createJob({
-    role, prompt, contract, maxOutputTokens, timeoutMs, confirmQuota: true, jobRoot: runJobsDir(id), runId: id
+  const reservation = reserveRunBudget(run, selector, prompt, maxOutputTokens);
+  run = updateRun(id, (current) => {
+    if (current.status !== "running") throw new Error(`Run cannot reserve a node from ${current.status}.`);
+    const node = nodeState(current, nodeId);
+    if (node?.jobId) return current;
+    if (["reserving", "running"].includes(node?.status)) throw new Error(`Node ${nodeId} is already reserved.`);
+    reserveRunBudget(current, selector, prompt, maxOutputTokens);
+    return {
+      ...current,
+      nodes: current.nodes.map((item) => item.id === nodeId
+        ? { ...item, status: "reserving", role, selector, reservation, startedAt: new Date().toISOString() }
+        : item)
+    };
   });
-  updateNode(nodeId, { status: "running", role, selector, jobId: created.id, startedAt: new Date().toISOString() });
+  const reservedNode = nodeState(run, nodeId);
+  if (reservedNode?.jobId) return { jobId: reservedNode.jobId, result: null };
+  if (readRun(id).status !== "running") throw new Error("Run was cancelled before dispatch.");
+  const created = await createJob({
+    role, prompt, contract, maxOutputTokens, timeoutMs, budget: budgetForReservedNode(run, reservation),
+    deadlineAt: run.deadlineAt, confirmQuota: true, jobRoot: runJobsDir(id), runId: id, deferWorker: true
+  });
+  // The run points at a queued job before it can dispatch, so recovery can
+  // attach to it instead of creating a second paid attempt.
+  let linked = false;
+  updateRun(id, (current) => {
+    if (current.status !== "running") return current;
+    linked = true;
+    return { ...current, nodes: current.nodes.map((item) => item.id === nodeId
+      ? { ...item, status: "running", role, selector, jobId: created.id, reservation, startedAt: new Date().toISOString() }
+      : item) };
+  });
+  if (!linked || readRun(id).status !== "running") {
+    await cancelJob({ id: created.id, confirm: true, graceMs: 0, jobRoot: runJobsDir(id) }).catch(() => {});
+    throw new Error("Run was cancelled before dispatch.");
+  }
+  startJobWorker(created.id, runJobsDir(id));
   appendRunEvent(id, "node.started", { node: nodeId, role, selector, jobId: created.id });
   return { jobId: created.id, result: null };
 }
@@ -144,8 +271,9 @@ async function finishNode(nodeId, started) {
     }
   }
   updateNode(nodeId, { status: result.status, completedAt: new Date().toISOString(), validation: result.validation, usage: result.usage });
-  refreshUsage();
+  const refreshed = refreshUsage();
   appendRunEvent(id, "node.completed", { node: nodeId, jobId: result.id, status: result.status, usage: result.usage });
+  if (refreshed.breaches.length) throw budgetError(`Run actual usage exceeded: ${refreshed.breaches.join(", ")}.`);
   return result;
 }
 
@@ -206,17 +334,16 @@ async function initialPipeline() {
   const candidate = requireSuccess(candidateResult, "Candidate node");
   const artifact = writeArtifact(id, "candidate.html", candidate);
   const validation = validateStandaloneHtml(candidate);
-  updateRun(id, (current) => ({
+  const committed = completeRunForReview(id, (current) => ({
     ...current,
-    status: "awaiting_codex",
     phase: "attestation",
-    workerPid: null,
     validation,
     artifacts: [...current.artifacts.filter((item) => item.name !== artifact.name), artifact],
     nodes: current.nodes.map((node) => node.id === "validate" ? { ...node, status: validation.valid ? "succeeded" : "failed", validation } : node)
   }));
+  if (!committed) return;
   appendRunEvent(id, "validation.completed", { valid: validation.valid, errors: validation.errors, warnings: validation.warnings });
-  appendRunEvent(id, "run.awaiting_codex", { artifact: artifact.name });
+  appendRunEvent(id, "run.awaiting_review", { artifact: artifact.name });
 }
 
 async function independentAnalysisPipeline() {
@@ -233,12 +360,13 @@ async function independentAnalysisPipeline() {
   const analysisA = requireSuccess(resultA, "First analysis");
   const analysisB = requireSuccess(resultB, "Second analysis");
   const artifact = writeArtifact(id, "analysis.json", JSON.stringify({ analysisA, analysisB }, null, 2));
-  updateRun(id, (current) => ({
-    ...current, status: "awaiting_codex", phase: "attestation", workerPid: null,
+  const committed = completeRunForReview(id, (current) => ({
+    ...current, phase: "attestation",
     validation: { valid: true, errors: [], warnings: [], checks: { independentOutputs: true } },
     artifacts: [...current.artifacts.filter((item) => item.name !== artifact.name), artifact]
   }));
-  appendRunEvent(id, "run.awaiting_codex", { artifact: artifact.name });
+  if (!committed) return;
+  appendRunEvent(id, "run.awaiting_review", { artifact: artifact.name });
 }
 
 async function finalizePipeline() {
@@ -246,29 +374,36 @@ async function finalizePipeline() {
   const candidate = readArtifact(id, run.artifacts.some((item) => item.name === "final.html") ? "final.html" : "candidate.html");
   const findings = JSON.stringify(run.attestation?.findings || []);
   const definition = nodeDefinition(run, "finalize");
-  const prompt = `Revise the candidate using the Codex findings. Return only the complete corrected offline standalone HTML document.\n\nORIGINAL REQUEST:\n${run.input}\n\nCODEX FINDINGS:\n${findings}\n\nCANDIDATE:\n${candidate}`;
+  const prompt = `Revise the candidate using the reviewer findings. Return only the complete corrected offline standalone HTML document.\n\nORIGINAL REQUEST:\n${run.input}\n\nREVIEW FINDINGS:\n${findings}\n\nCANDIDATE:\n${candidate}`;
   let result = await executeNode("finalize", definition.role, definition.contract, prompt, definition.maxOutputTokens);
   if (result.status !== "succeeded") throw new Error(`Finalization failed: ${result.status}`);
   const artifact = writeArtifact(id, "final.html", result.output);
   const validation = validateStandaloneHtml(result.output);
-  updateRun(id, (current) => ({
-    ...current, status: "awaiting_codex", phase: "attestation_final", workerPid: null, validation,
+  const committed = completeRunForReview(id, (current) => ({
+    ...current, phase: "attestation_final", validation,
     artifacts: [...current.artifacts.filter((item) => item.name !== artifact.name), artifact]
   }));
+  if (!committed) return;
   appendRunEvent(id, "validation.completed", { valid: validation.valid, errors: validation.errors, warnings: validation.warnings, artifact: artifact.name });
-  appendRunEvent(id, "run.awaiting_codex", { artifact: artifact.name, final: true });
+  appendRunEvent(id, "run.awaiting_review", { artifact: artifact.name, final: true });
 }
 
-try {
-  appendRunEvent(id, "worker.started", { mode, pid: process.pid });
-  if (mode === "finalize") await finalizePipeline();
-  else if (readRun(id).template === "independent-analysis") await independentAnalysisPipeline();
-  else await initialPipeline();
-} catch (error) {
-  const budget = error.name === "BudgetExceededError";
-  updateRun(id, (run) => ({
-    ...run, status: budget ? "budget_exceeded" : "failed", workerPid: null,
-    error: { name: error.name || "Error", message: error.message }, completedAt: new Date().toISOString()
-  }));
-  appendRunEvent(id, budget ? "run.budget_exceeded" : "run.failed", { error: error.message });
+if (id) {
+  try {
+    if (readRun(id).status === "running") {
+      appendRunEvent(id, "worker.started", { mode, pid: process.pid });
+      if (mode === "finalize") await finalizePipeline();
+      else if (readRun(id).template === "independent-analysis") await independentAnalysisPipeline();
+      else await initialPipeline();
+    }
+  } catch (error) {
+    if (readRun(id).status === "running") {
+      const budget = error.name === "BudgetExceededError";
+      updateRun(id, (run) => ({
+        ...run, status: budget ? "budget_exceeded" : "failed", workerPid: null,
+        error: { name: error.name || "Error", message: error.message }, completedAt: new Date().toISOString()
+      }));
+      appendRunEvent(id, budget ? "run.budget_exceeded" : "run.failed", { error: error.message });
+    }
+  }
 }

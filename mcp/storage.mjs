@@ -18,6 +18,9 @@ export const DATABASE_PATH = process.env.OMP_ORCHESTRATOR_DB_PATH
 export const CAS_ROOT = process.env.OMP_ORCHESTRATOR_CAS_DIR
   || path.join(STATE_ROOT, "objects", "sha256");
 
+/** Latest schema version this code writes; older code must tolerate it. */
+export const SCHEMA_VERSION = 4;
+
 let database;
 
 function restrict(pathname, mode) {
@@ -32,7 +35,6 @@ function migrate(db) {
       applied_at TEXT NOT NULL
     );
   `);
-  const applied = new Set(db.prepare("SELECT version FROM schema_migrations").all().map((row) => row.version));
   const migrations = [{
     version: 1,
     name: "durable_state",
@@ -198,10 +200,41 @@ function migrate(db) {
       JOIN jobs j ON j.id = ja.job_id
       WHERE ja.usage_json IS NOT NULL;
     `
+  }, {
+    version: 3,
+    name: "neutral_review_status",
+    // Review is not tied to one client. Code keeps accepting the legacy status
+    // (and the legacy "codex" attestation node id), so an older image can
+    // still read and attest runs written by this schema.
+    sql: `
+      UPDATE runs
+      SET status = 'awaiting_review', payload = json_set(payload, '$.status', 'awaiting_review')
+      WHERE status = 'awaiting_codex';
+    `
+  }, {
+    version: 4,
+    name: "audit_events",
+    // Who changed state, through which mechanism. Arguments are not stored:
+    // prompts and findings may contain sensitive text.
+    sql: `
+      CREATE TABLE audit_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        mechanism TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        target_id TEXT,
+        outcome TEXT NOT NULL,
+        error_name TEXT
+      );
+      CREATE INDEX audit_events_at ON audit_events(at DESC);
+    `
   }];
-  const pending = migrations.filter((migration) => !applied.has(migration.version));
-  if (applied.size && pending.length && existsSync(DATABASE_PATH)) {
-    const currentVersion = Math.max(...applied);
+  if (migrations.at(-1).version !== SCHEMA_VERSION) throw new Error("SCHEMA_VERSION is out of date.");
+  const beforeLock = new Set(db.prepare("SELECT version FROM schema_migrations").all().map((row) => row.version));
+  const pendingBeforeLock = migrations.filter((migration) => !beforeLock.has(migration.version));
+  if (beforeLock.size && pendingBeforeLock.length && existsSync(DATABASE_PATH)) {
+    const currentVersion = Math.max(...beforeLock);
     const backup = `${DATABASE_PATH}.bak-v${currentVersion}`;
     if (!existsSync(backup)) {
       db.pragma("wal_checkpoint(FULL)");
@@ -209,13 +242,59 @@ function migrate(db) {
       restrict(backup, 0o600);
     }
   }
-  for (const migration of migrations) {
-    if (applied.has(migration.version)) continue;
-    db.transaction(() => {
+  runImmediateTransaction(db, () => {
+    const applied = new Set(db.prepare("SELECT version FROM schema_migrations").all().map((row) => row.version));
+    for (const migration of migrations) {
+      if (applied.has(migration.version)) continue;
       db.exec(migration.sql);
       db.prepare("INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)")
         .run(migration.version, migration.name, new Date().toISOString());
-    })();
+    }
+  });
+}
+
+function runImmediateTransaction(db, work) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = work();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw error;
+  }
+}
+
+export function withImmediateTransaction(work) {
+  const db = getDatabase();
+  // Operations that coordinate several store updates hold the outer write
+  // transaction. A nested store call uses a SQLite savepoint rather than
+  // starting another BEGIN, preserving one atomic commit.
+  return db.inTransaction ? db.transaction(work)() : runImmediateTransaction(db, work);
+}
+
+const INIT_BUSY_DEADLINE_MS = 10_000;
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
+
+function isBusy(error) {
+  return typeof error?.code === "string" && error.code.startsWith("SQLITE_BUSY");
+}
+
+// Switching a new file into WAL mode and WAL recovery can return SQLITE_BUSY
+// without consulting the busy handler while another process initializes the
+// same database. Initialization is idempotent (migrations re-check under
+// BEGIN IMMEDIATE), so retry it with bounded backoff.
+function retryWhileBusy(work) {
+  const deadline = Date.now() + INIT_BUSY_DEADLINE_MS;
+  let delay = 10;
+  for (;;) {
+    try {
+      return work();
+    } catch (error) {
+      if (!isBusy(error) || Date.now() >= deadline) throw error;
+      Atomics.wait(sleeper, 0, 0, delay);
+      delay = Math.min(delay * 2, 250);
+    }
   }
 }
 
@@ -223,13 +302,20 @@ export function getDatabase() {
   if (database) return database;
   mkdirSync(path.dirname(DATABASE_PATH), { recursive: true, mode: 0o700 });
   restrict(path.dirname(DATABASE_PATH), 0o700);
-  database = new Database(DATABASE_PATH, { timeout: 5_000 });
-  database.pragma("journal_mode = WAL");
-  database.pragma("synchronous = NORMAL");
-  database.pragma("foreign_keys = ON");
-  database.pragma("busy_timeout = 5000");
-  migrate(database);
+  const db = new Database(DATABASE_PATH, { timeout: 5_000 });
+  try {
+    db.pragma("busy_timeout = 5000");
+    retryWhileBusy(() => db.pragma("journal_mode = WAL"));
+    db.pragma("synchronous = NORMAL");
+    db.pragma("foreign_keys = ON");
+    retryWhileBusy(() => migrate(db));
+  } catch (error) {
+    // Never cache a handle whose pragmas or migrations did not complete.
+    try { db.close(); } catch {}
+    throw error;
+  }
   restrict(DATABASE_PATH, 0o600);
+  database = db;
   return database;
 }
 

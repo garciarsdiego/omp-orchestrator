@@ -95,11 +95,34 @@ export function buildProviderReadiness(models, roles = {}) {
   });
 }
 
+export function catalogProviders(models, roles = {}) {
+  const grouped = new Map();
+  for (const model of models) {
+    if (!model?.provider) continue;
+    grouped.set(model.provider, (grouped.get(model.provider) || 0) + 1);
+  }
+  return [...grouped].sort(([a], [b]) => a.localeCompare(b)).map(([id, modelCount]) => ({
+    id,
+    modelCount,
+    configuredRoles: Object.entries(roles).filter(([, selector]) => {
+      try { return parseRoleSelector(selector).provider === id; } catch { return false; }
+    }).map(([role]) => role),
+    catalogAvailable: true,
+    operationalStatus: "unknown"
+  }));
+}
+
 export function getProviderReadiness() {
   const catalog = getModels({ limit: Number.POSITIVE_INFINITY });
+  const roles = getRoles();
+  const providers = catalogProviders(catalog.models, roles);
   return {
     requested: Object.keys(TARGET_PROVIDERS).length,
-    ready: buildProviderReadiness(catalog.models, getRoles()),
+    ready: buildProviderReadiness(catalog.models, roles),
+    catalogProviders: providers,
+    totalCatalogProviders: providers.length,
+    observedAt: new Date().toISOString(),
+    readinessMeaning: "Catalog availability only; account reachability and quota were not probed.",
     secretsReturned: false
   };
 }

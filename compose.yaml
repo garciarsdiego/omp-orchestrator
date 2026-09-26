@@ -1,0 +1,57 @@
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: omp-orchestrator:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OMP_ORCHESTRATOR_HOST_PORT:-8080}:8080"
+    environment:
+      OMP_ORCHESTRATOR_ACCESS_TOKEN_FILE: /run/omp-orchestrator/access-token
+      OMP_ORCHESTRATOR_AGENT_DISPATCH: external
+      # This is the browser origin for the default loopback-only deployment.
+      # Set it to the external HTTPS origin when placing a TLS proxy in front.
+      OMP_ORCHESTRATOR_PUBLIC_ORIGIN: ${OMP_ORCHESTRATOR_PUBLIC_ORIGIN:-http://127.0.0.1:8080}
+      OMP_ORCHESTRATOR_WORKSPACE_ROOT: /workspaces
+    volumes:
+      - omp-state:/var/lib/omp-orchestrator
+      - omp-workspaces:/workspaces
+      - ${OMP_ORCHESTRATOR_TOKEN_FILE:-./secrets/access-token}:/run/omp-orchestrator/access-token:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8080/healthz >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  agent-worker:
+    image: omp-orchestrator:local
+    command: ["node", "mcp/agent-supervisor.mjs"]
+    restart: unless-stopped
+    environment:
+      OMP_ORCHESTRATOR_AGENT_DISPATCH: external
+      OMP_ORCHESTRATOR_WORKSPACE_ROOT: /workspaces
+    volumes:
+      - omp-state:/var/lib/omp-orchestrator
+      - omp-workspaces:/workspaces
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /var/lib/omp-orchestrator/state/agent-supervisor.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  omp-state:
+  omp-workspaces:
