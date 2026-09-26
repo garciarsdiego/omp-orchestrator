@@ -83,7 +83,7 @@ export const CLI_PROFILES = {
     // prompt argument. The adapter therefore passes the prompt as the argument
     // and closes stdin (the adapter's stdin pipe is not forwarded).
     promptVia: "argv",
-    args: (fixed, prompt) => ["exec", ...fixed, "--json", "--skip-git-repo-check", "--ephemeral", prompt],
+    args: (fixed, prompt) => ["exec", ...fixed, "--json", "--skip-git-repo-check", "--ephemeral", "--", prompt],
     parse(stdout) {
       const events = parseJsonLines(stdout);
       const failed = events.find((event) => event.type === "turn.failed" || event.type === "error");
@@ -140,7 +140,7 @@ export const CLI_PROFILES = {
     // cursor-agent takes the prompt only as an argument; it is visible in the
     // local process list while the job runs.
     promptVia: "argv",
-    args: (fixed, prompt) => [...fixed, "-p", "--output-format", "json", "--trust", prompt],
+    args: (fixed, prompt) => [...fixed, "-p", "--output-format", "json", "--trust", "--", prompt],
     parse(stdout) {
       const doc = resultDocument(stdout, "cursor-agent");
       const raw = doc.usage;
