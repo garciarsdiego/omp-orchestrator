@@ -14,6 +14,8 @@ const backendFile = path.join(root, "backends.json");
 writeFileSync(backendFile, JSON.stringify({ backends: [
   { id: "fake-command", type: "command-json", executable: process.execPath, args: [commandFixture, "success"] },
   { id: "fake-command-hang", type: "command-json", executable: process.execPath, args: [commandFixture, "hang"] },
+  { id: "fake-command-stderr", type: "command-json", executable: process.execPath, args: [commandFixture, "stderr-prompt"] },
+  { id: "fake-command-stderr-secret", type: "command-json", executable: process.execPath, args: [commandFixture, "stderr-secret"] },
   { id: "fake-rpc", type: "omp-rpc", executable: process.execPath, args: [rpcFixture] }
 ] }));
 process.env.OMP_ORCHESTRATOR_STATE_DIR = root;
@@ -50,6 +52,23 @@ test("command backend completes through persistent jobs and an idempotent reques
   assert.equal(jobs.getAgentResult({ id: created.id }).usage.total_tokens, 5);
   assert.ok(jobs.getAgentEvents({ id: created.id }).events.some((event) => event.type === "agent.completed"));
   assert.ok(jobs.listAgentJobs({ limit: 10 }).some((job) => job.id === created.id));
+});
+
+test("a failed backend leaves a bounded diagnostic without the prompt or secrets", async () => {
+  const failed = jobs.createAgentJob({ backend: "fake-command-stderr", workspace: "project-e", prompt: "private-words",
+    timeoutMs: 10_000, idempotencyKey: "test-stderr-001", confirmQuota: true });
+  assert.equal((await waitFor(failed.id, ["succeeded", "failed"])).status, "failed");
+  const event = jobs.getAgentEvents({ id: failed.id }).events.find((item) => item.type === "agent.failed");
+  assert.deepEqual(event && { code: event.code, exitCode: event.exitCode, stderrTail: event.stderrTail },
+    { code: "NONZERO_EXIT", exitCode: 2, stderrTail: "diagnostic:[prompt redacted]" });
+
+  const secret = jobs.createAgentJob({ backend: "fake-command-stderr-secret", workspace: "project-e", prompt: "hello",
+    timeoutMs: 10_000, idempotencyKey: "test-stderr-002", confirmQuota: true });
+  assert.equal((await waitFor(secret.id, ["succeeded", "failed"])).status, "failed");
+  const withheld = jobs.getAgentEvents({ id: secret.id }).events.find((item) => item.type === "agent.failed");
+  assert.equal(withheld.stderrTail, null);
+  assert.equal(withheld.stderrWithheld, "blocked secret pattern");
+  assert.doesNotMatch(JSON.stringify(jobs.getAgentJob({ id: secret.id })), /sk-a{24}/);
 });
 
 test("RPC backend waits for session_settled and exposes event cursors", async () => {
