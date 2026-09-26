@@ -27,7 +27,12 @@ RESTORED="$PROJECT-restored"
 
 step() { printf '\n== %s\n' "$*"; }
 pass() { echo "PASS $*"; }
-fail() { echo "FAIL $*"; exit 1; }
+fail() {
+  echo "FAIL $*"
+  echo "--- compose logs (tail) ---"
+  docker compose -p "$PROJECT" -f "$REPO/compose.yaml" -f "$QA/override.yaml" logs --tail 30 2>&1 || true
+  exit 1
+}
 check() { local name="$1"; shift; if "$@"; then pass "$name"; else fail "$name"; fi; }
 
 rm -rf "$QA"; mkdir -p "$QA"; chmod 700 "$QA"
@@ -35,6 +40,12 @@ rm -rf "$QA"; mkdir -p "$QA"; chmod 700 "$QA"
   openssl rand -base64 48 | tr -d '\n' > "$QA/access-token"
   # The token reaches curl through a header file, never through argv.
   printf 'Authorization: Bearer %s\n' "$(cat "$QA/access-token")" > "$QA/auth-header" )
+# The image runs as UID 1000 (see DEPLOY-VPS.md). When the host user differs
+# (e.g. CI runners use 1001), the throwaway token must be readable by it.
+if [ "$(id -u)" != 1000 ]; then
+  echo "note: host UID $(id -u) != 1000; making the throwaway token world-readable for the container"
+  chmod 755 "$QA"; chmod 644 "$QA/access-token"
+fi
 cat > "$QA/backends.json" <<'EOF'
 { "backends": [
   { "id": "fake-command", "type": "command-json", "executable": "/usr/local/bin/node",
