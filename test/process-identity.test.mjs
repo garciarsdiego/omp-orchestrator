@@ -16,7 +16,8 @@ const runs = await import("../mcp/run-store.mjs");
 const recovery = await import("../mcp/recovery.mjs");
 const supervisor = await import("../mcp/agent-supervisor.mjs");
 
-const linux = process.platform === "linux";
+const supported = ["linux", "win32"].includes(process.platform);
+const skip = !supported && "needs a process start time source";
 
 test.after(() => {
   storage.closeDatabase();
@@ -27,7 +28,8 @@ test.after(() => {
 // wrapped PID counter looks like to a stale record.
 function reusedIdentity(pid) {
   const parts = identity.processIdentity(pid).split(":");
-  parts[3] = String(Number(parts[3]) + 1);
+  // Windows FILETIME values exceed Number precision.
+  parts[parts.length - 1] = String(BigInt(parts.at(-1)) + 1n);
   return parts.join(":");
 }
 
@@ -42,7 +44,8 @@ function agentJob(fields) {
 
 test("identity confirms the live process and falls back to PID-only without one", () => {
   const self = identity.processIdentity(process.pid);
-  if (linux) assert.match(self, new RegExp(`^linux:[^:]+:${process.pid}:\\d+$`));
+  if (process.platform === "linux") assert.match(self, new RegExp(`^linux:[^:]+:${process.pid}:\\d+$`));
+  else if (process.platform === "win32") assert.match(self, new RegExp(`^win32:${process.pid}:\\d+$`));
   else assert.equal(self, null);
   assert.equal(identity.processAlive(process.pid, self), true);
   assert.equal(identity.processAlive(process.pid, undefined), true);
@@ -60,13 +63,13 @@ test("an exited process is not alive", async () => {
   assert.equal(identity.processAlive(pid, null), false);
 });
 
-test("a reused PID is reported dead and never as the recorded process", { skip: !linux && "needs /proc" }, () => {
+test("a reused PID is reported dead and never as the recorded process", { skip }, () => {
   const stale = reusedIdentity(process.pid);
   assert.equal(identity.processAlive(process.pid, stale), false);
   assert.equal(identity.processReused(process.pid, stale), true);
 });
 
-test("supervisor interrupts an agent job whose PID was reused", { skip: !linux && "needs /proc" }, () => {
+test("supervisor interrupts an agent job whose PID was reused", { skip }, () => {
   const reused = agentJob({ workerPid: process.pid, workerIdentity: reusedIdentity(process.pid) });
   const genuine = agentJob({ workerPid: process.pid, workerIdentity: identity.processIdentity(process.pid) });
   jobs.writeJob(reused);
@@ -78,7 +81,7 @@ test("supervisor interrupts an agent job whose PID was reused", { skip: !linux &
   assert.equal(jobs.readJob(genuine.id).status, "running");
 });
 
-test("startup recovery interrupts runs and jobs whose PID was reused", { skip: !linux && "needs /proc" }, () => {
+test("startup recovery interrupts runs and jobs whose PID was reused", { skip }, () => {
   delete process.env.OMP_ORCHESTRATOR_AGENT_DISPATCH;
   try {
     const now = new Date().toISOString();
