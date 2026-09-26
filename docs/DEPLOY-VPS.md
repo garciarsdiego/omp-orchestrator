@@ -100,3 +100,25 @@ docker compose ps
 ```
 
 Se health/readyz falharem, volte à imagem anterior e ao snapshot testado. Um rollback de imagem não reverte automaticamente migrações ou alterações de estado; trate a restauração do SQLite e dos objetos como uma etapa separada e verificável.
+
+**Política de schema.** Toda migração precisa ser compatível com a imagem anterior: a versão anterior do código deve continuar lendo e operando um banco já migrado. Por exemplo, a v3 troca `awaiting_codex` por `awaiting_review`, e o código continua aceitando os dois. Antes de aplicar uma migração num banco existente, o serviço grava `orchestrator.sqlite.bak-v<N>` ao lado do banco, uma cópia após `wal_checkpoint(FULL)`. Essa cópia não inclui os objetos CAS e não substitui o pacote de backup.
+
+Há dois tipos de rollback:
+
+1. **Só de imagem.** Suba a tag anterior sobre os mesmos volumes. Serve quando o problema está no código e o schema novo é compatível com a imagem anterior.
+2. **Completo.** Restaure o pacote de backup feito antes do upgrade num volume novo (procedimento acima) e suba a imagem anterior sobre ele. O trabalho feito depois do upgrade não estará nesse estado.
+
+`test/compose/upgrade-rollback.sh` ensaia os dois casos com motores fake:
+
+- **Na imagem antiga:** estado e pacote de backup.
+- **Upgrade:** a migração roda, o `.bak-v<N>` passa no `integrity_check` e os registros continuam legíveis.
+- **Rollback só de imagem:** a imagem antiga lê o banco migrado e aceita trabalho novo.
+- **Rollback completo:** o schema e os registros anteriores ao upgrade voltam.
+
+Rode-o antes de publicar uma imagem que traga migração:
+
+```sh
+OLD_IMAGE=omp-orchestrator:<tag-anterior> NEW_IMAGE=omp-orchestrator:<tag-nova> test/compose/upgrade-rollback.sh
+```
+
+Em 26/09/2026, o ensaio passou em todos os checks do schema 2 (`831fd97`) para o 3, no Docker via WSL/Ubuntu. Nenhuma VPS foi usada.
