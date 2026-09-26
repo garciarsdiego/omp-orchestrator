@@ -13,12 +13,14 @@ Crie um token próprio com nome, junto do token do operador, sem restart:
 umask 077
 PROM_TOKEN="$(openssl rand -base64 48 | tr -d '\n')"
 printf 'operator:%s\nprometheus:%s\n' "$(cat secrets/access-token)" "$PROM_TOKEN" > secrets/access-token.new
-mv secrets/access-token.new secrets/access-token
+# No lugar, nunca `mv`: o Compose monta o arquivo único e não enxerga um inode novo.
+cat secrets/access-token.new > secrets/access-token && rm secrets/access-token.new
 printf '%s' "$PROM_TOKEN" > /etc/prometheus/omp-orchestrator-token
 chmod 0400 /etc/prometheus/omp-orchestrator-token
 ```
 
-O arquivo aceita `nome:token` por linha. Nomes e tokens não podem repetir.
+Esse bloco supõe um arquivo com um único token sem nome (ator `default`), que
+passa a se chamar `operator`. O arquivo aceita `nome:token` por linha. Nomes e tokens não podem repetir.
 Cada token precisa de pelo menos 32 bytes. Uma reescrita inválida mantém os
 tokens anteriores em vez de bloquear os operadores. O nome vira o ator da
 auditoria (`omp_audit_list`).
@@ -117,18 +119,33 @@ Só aceite o backup depois de ler um artifact/run esperado do pacote;
 
 ## Runbook de rotação
 
-Adicionar o novo token junto do antigo, distribuir, remover o antigo:
+Adicionar o novo token junto do antigo, trocar o cliente e remover o antigo.
+`secrets/access-token` é sempre reescrito no lugar (`>>` ou `cat … >`), nunca
+com `mv`: o container só enxerga o inode que foi montado.
 
 ```sh
 umask 077
-printf 'operator:%s\nprometheus:%s\n' "$(openssl rand -base64 48 | tr -d '\n')" "$(cat /etc/prometheus/omp-orchestrator-token)" > secrets/access-token.new
-mv secrets/access-token.new secrets/access-token
-printf '%s' "$(openssl rand -base64 48 | tr -d '\n')" > /etc/prometheus/omp-orchestrator-token
+NEW="$(openssl rand -base64 48 | tr -d '\n')"
+printf 'prometheus-next:%s\n' "$NEW" >> secrets/access-token        # 1. novo junto do antigo
+sleep 2
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $NEW" http://127.0.0.1:8080/metrics   # 2. precisa dar 200
+printf '%s' "$NEW" > /etc/prometheus/omp-orchestrator-token.new       # 3. troca o do Prometheus
+mv /etc/prometheus/omp-orchestrator-token.new /etc/prometheus/omp-orchestrator-token   # arquivo do host: aqui mv serve
 chmod 0400 /etc/prometheus/omp-orchestrator-token
+grep -v '^prometheus:' secrets/access-token | sed 's/^prometheus-next:/prometheus:/' > secrets/access-token.tmp
+cat secrets/access-token.tmp > secrets/access-token && rm secrets/access-token.tmp     # 4. remove o antigo
 ```
 
-O servidor relê em até 1 s, sem restart. Rotação sem downtime porque os dois
-tokens valem juntos na janela.
+O servidor relê em até 1 s, sem restart. Não há janela sem token válido: o
+antigo vale até o passo 4 e o novo desde o passo 1. O Prometheus relê o
+`credentials_file` a cada scrape.
+
+Ensaio real em 26/09/2026 (Compose do smoke): depois de um `mv`, o token novo
+recebeu 401 até o container reiniciar; com a reescrita no lugar, o novo
+recebeu 200 e o removido 401, sem restart.
+
+Isto substitui o runbook anterior, que usava `mv` e gerava um token novo do
+Prometheus que nunca entrava no arquivo do servidor.
 
 ## Limites
 

@@ -20,7 +20,7 @@ wsl bash -lc 'cd /mnt/c/Users/Diego/Documents/ChatGPT/OMP-Orchestrator-handoff &
 Aguarde o sidecar:
 
 ```powershell
-wsl bash -lc 'for i in $(seq 1 30); do code=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $(cat /mnt/c/Users/Diego/Documents/ChatGPT/OMP-Orchestrator-handoff/secrets/access-token)" http://127.0.0.1:8080/readyz); echo "readyz=$code"; if ([string]$code -eq "200") { break }; Start-Sleep -Seconds 2 }'
+wsl bash -lc 'for i in $(seq 1 30); do code=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $(cat /mnt/c/Users/Diego/Documents/ChatGPT/OMP-Orchestrator-handoff/secrets/access-token)" http://127.0.0.1:8080/readyz); echo "readyz=$code"; [ "$code" = 200 ] && break; sleep 2; done'
 ```
 
 Esperado: `healthz` 200 sem token; `readyz` 200 com token; sem token 401.

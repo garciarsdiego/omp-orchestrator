@@ -62,7 +62,7 @@ printf 'ana:%s\n' "$(openssl rand -base64 48 | tr -d '\n')" >> secrets/access-to
 # distribua o novo token; quando ninguém mais usar o antigo, remova a linha dele
 ```
 
-Escreva o arquivo novo de forma atômica (arquivo temporário + `mv`). Se a versão nova for inválida (vazia, token curto, duplicado), o servidor registra o erro e **mantém os tokens anteriores**, para não bloquear os operadores. Um único token numa linha sem nome continua funcionando e aparece como `default`.
+**Reescreva o arquivo no lugar** (`cat novo > secrets/access-token`), nunca com `mv`. O Compose monta o token como arquivo único: um `mv` troca o inode no host, e o container continua lendo o arquivo antigo até reiniciar. Isso foi medido em 26/09/2026: depois do `mv`, o token novo recebia 401. A reescrita no lugar não é atômica, mas uma leitura parcial é só uma versão inválida. Confira o token novo com `curl` antes de remover o antigo. Se a versão nova for inválida (vazia, token curto, duplicado), o servidor registra o erro e **mantém os tokens anteriores**, para não bloquear os operadores. Um único token numa linha sem nome continua funcionando e aparece como `default`.
 
 ## Métricas
 
