@@ -42,7 +42,7 @@
         <section class="panel agents-panel" aria-labelledby="agents-title">
           <div class="panel-heading"><div><p class="eyebrow">03 / MOTORES</p><h2 id="agents-title">Agentes</h2></div><span id="agents-count" class="counter">0</span></div>
           <div class="agent-layout">
-            <form id="agent-form"><p class="panel-note">Inicie uma sessão OMP RPC ou uma CLI cadastrada pelo operador. O agente poderá usar ferramentas e quota até o limite de tempo.</p><label for="agent-backend">Motor</label><select id="agent-backend"></select><label for="agent-workspace">Workspace</label><input id="agent-workspace" required value="project" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]*"><label for="agent-prompt">Tarefa</label><textarea id="agent-prompt" required rows="5" placeholder="Descreva o trabalho e os critérios de aceite."></textarea><button type="submit">Criar job de agente <span aria-hidden="true">↗</span></button></form>
+            <form id="agent-form"><p class="panel-note">Inicie uma sessão OMP RPC ou uma CLI cadastrada pelo operador. O agente poderá usar ferramentas e quota até o limite de tempo.</p><label for="agent-backend">Motor</label><select id="agent-backend"></select><label for="agent-workspace">Workspace</label><input id="agent-workspace" required value="project" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"><label for="agent-prompt">Tarefa</label><textarea id="agent-prompt" required rows="5" placeholder="Descreva o trabalho e os critérios de aceite."></textarea><button type="submit">Criar job de agente <span aria-hidden="true">↗</span></button></form>
             <div id="agents-list" class="record-list"><p class="empty">Nenhum agente executado.</p></div>
           </div>
         </section>
