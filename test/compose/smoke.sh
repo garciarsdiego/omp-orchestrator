@@ -11,7 +11,7 @@
 # exposure. It creates its own Compose project, volumes and throwaway token,
 # and removes them at the end unless KEEP=1 (then prints how to tear down).
 #
-# Usage: test/compose/smoke.sh    Env: PORT RESTORE_PORT IMAGE PROJECT ROUNDS KEEP
+# Usage: test/compose/smoke.sh [down]    Env: PORT RESTORE_PORT IMAGE PROJECT ROUNDS KEEP
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -82,6 +82,7 @@ teardown() {
   docker volume rm "$RESTORE_VOLUME" >/dev/null 2>&1 || true
   rm -rf "$QA"
 }
+if [ "${1:-}" = down ]; then teardown; echo "removed $PROJECT"; exit 0; fi
 if [ "$KEEP" != 1 ]; then trap teardown EXIT; fi
 
 step "build and start ($PROJECT on 127.0.0.1:$PORT)"
@@ -161,6 +162,6 @@ if [ "$KEEP" = 1 ]; then
   echo
   echo "KEEP=1: stack left running on $base (restored copy on $rbase)."
   echo "Throwaway token file: $QA/access-token"
-  echo "Tear down: docker rm -f $RESTORED; docker compose -p $PROJECT -f $REPO/compose.yaml -f $QA/override.yaml down -v; docker volume rm $RESTORE_VOLUME; rm -rf $QA"
+  echo "Tear down: PROJECT=$PROJECT $0 down"
 fi
 echo "SMOKE OK"
