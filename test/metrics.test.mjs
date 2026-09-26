@@ -34,7 +34,7 @@ test("metrics are authenticated and exposed as Prometheus text and JSON", async 
   seed();
   const tokenFile = path.join(state, "token");
   writeFileSync(tokenFile, `${secret}\n`);
-  const server = await startHttpServer({ port: 0, accessTokenFile: tokenFile, publicOrigin: "" });
+  const server = await startHttpServer({ bind: "127.0.0.1", port: 0, accessTokenFile: tokenFile, publicOrigin: "" });
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.port}`;
   const headers = { authorization: `Bearer ${secret}` };

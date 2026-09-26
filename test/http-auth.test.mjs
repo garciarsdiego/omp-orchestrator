@@ -33,7 +33,7 @@ test("access token file accepts one or several named tokens", () => {
 
 test("named tokens identify the actor, rotate without restart and never lock out", async (t) => {
   writeFileSync(tokenFile, `alice:${alice}\nbob:${bob}\n`);
-  const server = await startHttpServer({ port: 0, accessTokenFile: tokenFile, tokenReloadMs: 0, publicOrigin: "" });
+  const server = await startHttpServer({ bind: "127.0.0.1", port: 0, accessTokenFile: tokenFile, tokenReloadMs: 0, publicOrigin: "" });
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.port}`;
   const request = (secret, pathname, body) => fetch(`${base}${pathname}`, {
