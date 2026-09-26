@@ -55,7 +55,7 @@ function modelsFrom(modelUsage) {
 /** Capability facts for one CLI adapter profile, shown by omp_agent_backends. */
 function profileCapabilities(name) {
   const facts = {
-    codex: { usageReported: true, usageSemantics: "openai-inclusive-cache", usageIncludes: ["input_tokens", "cached_input_tokens", "output_tokens"], cacheBehavior: "input_tokens already includes cached input; reported per completed turn", promptDelivery: "argv (visible in the local process list while running)", usageUnknownAs: "missing turns fail loudly (never zero)" },
+    codex: { usageReported: true, usageSemantics: "openai-inclusive-cache", usageIncludes: ["input_tokens", "cached_input_tokens", "output_tokens"], cacheBehavior: "input_tokens already includes cached input; reported per completed turn", promptDelivery: "stdin", usageUnknownAs: "missing turns fail loudly (never zero)" },
     claude: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "cache reads/writes are exclusive of input_tokens and are summed into the normalized input total", promptDelivery: "stdin", usageUnknownAs: "unknown stays omitted (never zero)" },
     droid: { usageReported: true, usageSemantics: "anthropic-exclusive-cache", usageIncludes: ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"], cacheBehavior: "same exclusive-cache sum as the other Anthropic-style CLIs", promptDelivery: "private temp file", usageUnknownAs: "unknown stays omitted (never zero)" },
     cursor: { usageReported: true, usageSemantics: "cursor-exclusive-cache", usageIncludes: ["inputTokens", "cacheReadTokens", "cacheWriteTokens", "outputTokens"], cacheBehavior: "inputTokens is uncached input only; cacheReadTokens/cacheWriteTokens are exclusive and summed into the normalized input (measured on cursor-agent 2026.09.26; vendor docs do not define it)", promptDelivery: "argv (visible in the local process list while running)", usageUnknownAs: "unknown stays omitted (never zero)" },
@@ -79,11 +79,11 @@ function resultDocument(stdout, cli) {
 
 export const CLI_PROFILES = {
   codex: {
-    // codex exec reads extra piped stdin as a `<stdin>` block appended to the
-    // prompt argument. The adapter therefore passes the prompt as the argument
-    // and closes stdin (the adapter's stdin pipe is not forwarded).
-    promptVia: "argv",
-    args: (fixed, prompt) => ["exec", ...fixed, "--json", "--skip-git-repo-check", "--ephemeral", "--", prompt],
+    // "-" makes codex exec read the whole prompt from stdin, so it never shows
+    // in the process list. Never combine it with a prompt argument: codex then
+    // appends stdin to the argument as a `<stdin>` block.
+    promptVia: "stdin",
+    args: (fixed) => ["exec", ...fixed, "--json", "--skip-git-repo-check", "--ephemeral", "-"],
     parse(stdout) {
       const events = parseJsonLines(stdout);
       const failed = events.find((event) => event.type === "turn.failed" || event.type === "error");
