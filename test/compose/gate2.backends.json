@@ -1,0 +1,10 @@
+{ "backends": [
+  { "id": "real-rpc", "type": "omp-rpc", "executable": "omp", "args": ["--model", "opencode-go/muse-spark-1.3-contributor", "--thinking", "high"] },
+  { "id": "real-codex", "type": "command-json", "executable": "/home/node/.local/share/node/bin/node", "args": ["/opt/omp-orchestrator/scripts/agent-cli-adapter.mjs", "codex", "--", "/home/node/.local/share/node/bin/codex", "-s", "read-only"], "envInherit": ["HOME"] },
+  { "id": "real-claude", "type": "command-json", "executable": "/home/node/.local/share/node/bin/node", "args": ["/opt/omp-orchestrator/scripts/agent-cli-adapter.mjs", "claude", "--", "/home/node/.local/bin/claude"], "envInherit": ["HOME"] },
+  { "id": "real-droid", "type": "command-json", "executable": "/home/node/.local/share/node/bin/node", "args": ["/opt/omp-orchestrator/scripts/agent-cli-adapter.mjs", "droid", "--", "/home/node/.local/bin/droid"], "envInherit": ["HOME"] },
+  { "id": "real-cursor", "type": "command-json", "executable": "/home/node/.local/share/node/bin/node", "args": ["/opt/omp-orchestrator/scripts/agent-cli-adapter.mjs", "cursor", "--", "/home/node/.local/bin/cursor-agent"], "envInherit": ["HOME"] },
+  { "id": "real-grok", "type": "command-json", "executable": "/home/node/.local/share/node/bin/node", "args": ["/opt/omp-orchestrator/scripts/agent-cli-adapter.mjs", "grok", "--", "/home/node/.local/bin/grok"], "envInherit": ["HOME"] },
+  { "id": "real-devin", "type": "command-json", "executable": "/home/node/.local/share/node/bin/node", "args": ["/opt/omp-orchestrator/scripts/agent-cli-adapter.mjs", "devin", "--", "/home/node/.local/bin/devin"], "envInherit": ["HOME"] },
+  { "id": "real-muse", "type": "command-json", "executable": "/home/node/.local/share/node/bin/node", "args": ["/opt/omp-orchestrator/scripts/agent-cli-adapter.mjs", "muse", "--", "/home/node/.local/bin/muse"], "envInherit": ["HOME"] }
+] }
