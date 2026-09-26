@@ -9,6 +9,8 @@
 - Added authenticated `/metrics` (Prometheus text) and `/api/metrics` (JSON), plus the `omp_metrics` and `omp_audit_list` tools.
 - Added `test/compose/smoke.sh` (also in CI) and `test/compose/upgrade-rollback.sh`, which rehearses an upgrade, an image-only rollback and a restore of a pre-upgrade backup across a schema migration.
 - CI runs an ESLint `no-undef` check.
+- OMP RPC agent jobs record usage from assistant `message_end` frames (tokens, effective provider/model, OMP's API-equivalent estimate). Aborted messages with zero usage are recorded as unknown. Real OMP 18.3.2 sessions completed, accepted a steer and were aborted.
+- Added `scripts/agent-cli-adapter.mjs` with headless profiles for Codex, Claude Code, Droid, Cursor, Grok, Devin and Muse, and `envInherit` (variable names only) for `command-json` backends. Each CLI ran a real job end to end through the Orchestrator.
 
 ## 0.8.0-preview.1 — Unreleased
 

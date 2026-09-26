@@ -186,3 +186,120 @@ Ambiente: browser do app desktop contra `http://127.0.0.1:18180` (Compose com `K
 | `test/compose/smoke.sh` com RT-10 | todos os checks; reinício do sidecar com job rodando → `interrupted`, com o PID 14 reaproveitado a cada rodada |
 
 Não validado: prompt OMP real, VPS/TLS, CI remoto e identidade de processo no Windows.
+
+## Rodada autorizada de 26/09/2026 (itens 1–10 do plano)
+
+O usuário autorizou:
+
+- push e PR;
+- uso da credencial OMP local, com qualquer provider ativo;
+- teste de upgrade/rollback;
+- rotação de token e ator auditado;
+- nomenclatura neutra de revisão;
+- motores reais com quota de Codex, Claude Code, Devin, Droid, Cursor, Grok e Muse;
+- identidade de processo no Windows;
+- métricas em Prometheus e JSON;
+- limpeza.
+
+VPS/TLS ficou para depois. Nenhuma credencial foi lida, copiada ou movida: cada motor usou o login que já existia na máquina.
+
+### 1. Push e PR
+
+`codex/omp-handoff` foi enviada, e o PR [garciarsdiego/omp-orchestrator#3](https://github.com/garciarsdiego/omp-orchestrator/pull/3) foi aberto contra `main`. Ele inclui o commit-base `75cf897`, que nunca tinha sido enviado.
+
+O primeiro CI remoto revelou duas falhas reais:
+
+- **`ffad77e`:** o smoke do Compose falhava no runner. O runner usa UID 1001, e o token 0600 ficava ilegível para o container (UID 1000). Agora o script torna o token descartável legível quando o UID difere e imprime os logs do Compose em qualquer `FAIL`.
+- **`43f973a`:** os testes novos de HTTP herdavam `OMP_ORCHESTRATOR_BIND=0.0.0.0` do Dockerfile dentro da imagem. Agora fixam `127.0.0.1`. Faltou rodar a suíte na imagem antes daquele push; depois da correção, a imagem passou 113/113.
+
+### 6. `d86c58c` — revisão neutra
+
+- Os templates chamam o nó de atestação de `review`, com descrições sem "Codex".
+- A atestação marca o nó pelo tipo, então runs antigas com o nó `codex` continuam atualizando.
+- O schema v3 migra `awaiting_codex` para `awaiting_review` na coluna e no payload. O código continua aceitando os nomes antigos, então a imagem anterior lê e atesta um banco migrado.
+- **Testes:** migração v2→v3 com `.bak-v2`, atestação de run legada e descrições neutras.
+
+### 4. `d2ad15d` — ensaio de upgrade e rollback
+
+`test/compose/upgrade-rollback.sh` roda com motores fake e token descartável:
+
+1. Na imagem antiga, grava estado (agent job e run legada com artifact) e cria um pacote de backup.
+2. Sobe a imagem nova nos mesmos volumes: a migração roda, o `.bak-v<N>` passa no `integrity_check` e os registros continuam legíveis.
+3. Volta só a imagem antiga: ela lê o banco migrado e aceita trabalho novo.
+4. Restaura o pacote anterior ao upgrade com a imagem antiga: o schema e os registros voltam, e o trabalho posterior não aparece.
+
+Passou do schema 2 (`831fd97`) para o 3. A política de schema compatível com a imagem anterior e os dois tipos de rollback estão em `DEPLOY-VPS.md`.
+
+### 8. `7a7821a` — identidade de processo no Windows
+
+- Formato `win32:<pid>:<FILETIME de início UTC>`, lido com `Get-Process` pelo `powershell.exe`, porque o Node não expõe o início do processo.
+- Cada consulta custa cerca de 200 ms, com cache de 1 s por PID.
+- Processos sem acesso (outro usuário, sistema) mantêm o fallback só por PID.
+- Os testes de reuso (unidade, supervisor, recovery) passaram a rodar no Windows. A comparação usa `BigInt`, porque o FILETIME excede a precisão de `Number`.
+- Suíte Windows: 12 de 13 execuções completas passaram. A primeira falhou por prazo no teste do supervisor externo, com o PowerShell ainda frio; isolado, o teste leva 1,5 s.
+
+### 5. `8eae332` — tokens nomeados, rotação e ator
+
+- O arquivo de token aceita várias linhas `nome:token`, ignora comentários e exige no mínimo 32 bytes, sem nomes ou valores repetidos.
+- O arquivo é relido em até 1 s depois de mudar. Um arquivo inválido mantém os tokens anteriores.
+- O transporte associa o ator com `AsyncLocalStorage`, e o núcleo lê esse contexto.
+- `invoke()` grava `audit_events` (schema v4) em toda operação que muda estado, sem argumentos. `omp_audit_list` consulta esses eventos, e a atestação grava ator e mecanismo.
+- **Testes:** parser, dois atores, ator via `/api/call` e via MCP, rotação sem reinício e arquivo inválido sem bloquear o acesso.
+- O storage exporta `SCHEMA_VERSION`.
+
+### 9. `c38b74c` — métricas
+
+- `/metrics` (texto Prometheus 0.0.4), `/api/metrics` (JSON) e a ferramenta `omp_metrics`, todos autenticados.
+- Conteúdo:
+  - jobs por tipo e status;
+  - runs por status;
+  - consumo e tokens registrados;
+  - resultados de auditoria;
+  - prontidão e idade do heartbeat do supervisor;
+  - respostas HTTP por classe de status e bearers recusados.
+- Nada de prompts, outputs, argumentos ou segredos.
+- O teste valida cada linha do formato e a paridade entre HTTP e a ferramenta. O `DEPLOY-VPS.md` traz um scrape config com token próprio.
+
+### 10. Limpeza (`71f6b53`, `f700276`)
+
+- A auditoria foi versionada em `docs/audit-2026-09-25/`. Ficaram de fora `doctor-local.json` e `interface-probes.json` (caminhos locais da máquina) e os logs, que já eram ignorados.
+- Versão `0.8.0-preview.2` em pacote, lockfile e plugin, com um teste de coerência entre os três. Os testes leem a versão do `package.json`, e a descrição do pacote ficou neutra.
+- Na worktree original, as alterações rastreadas eram idênticas byte a byte a `2c4d818`, conferido por `git hash-object`, e foram descartadas com `git restore`. Os arquivos não rastreados de lá continuam intactos.
+- O `NEXT_STEPS.md` já estava marcado como histórico.
+
+### 2. `54908ab` — OMP real e uso das sessões
+
+Execução pela CLI JSON (`call omp_agent_create`/`get`/`events`/`result`/`abort`/`steer`) no Windows. OMP 18.3.2 em `C:\Users\Diego\.bun\bin\omp.exe`, backend `omp-rpc` com `--model openai-codex/gpt-5.5 --thinking low`, estado isolado em `%TEMP%\omp-real`.
+
+| Cenário | Resultado |
+|---|---|
+| prompt mínimo | `succeeded` em 6 s, saída exata `ORCHESTRATOR-REAL-OK`; eventos `prompt_result` → `session_settled` → `agent.completed` |
+| uso (depois da correção) | 10.080 tokens, modelo `openai-codex/gpt-5.5`, custo equivalente estimado pelo OMP de US$ 0,0507 |
+| abort depois de ~5 s | `cancelled`; uso `null` (desconhecido) |
+| steer depois de ~3 s | a instrução nova mudou o resultado para `STEERED-OK`; 23.806 tokens, `complete: true` |
+
+- **Defeito encontrado:** o uso das sessões OMP era sempre `null`. Uma sonda real mostrou o formato: o `message_end` do assistente traz `usage`, `provider` e `model`, e o `agent_end` repete a mensagem.
+- **Correção:** acumulação por `messageId` no adapter do OMP.
+- **Segundo defeito encontrado no abort real:** o OMP reporta uso **zero** na mensagem cortada. Mensagens `aborted`/`error` com uso zerado agora contam como não reportadas, e o resultado diz `complete: false` sem estimativa de custo.
+- O fixture fake reproduz o formato observado, com valores sintéticos.
+
+### 7. Motores reais via `scripts/agent-cli-adapter.mjs`
+
+- `command-json` ganhou `envInherit`: só nomes de variáveis, copiadas do ambiente do Orchestrator, para cada CLI achar o login que já existe.
+- O adaptador tem perfis para as sete CLIs. Os formatos foram capturados das saídas reais nas versões listadas em `mcp/backends/cli-profiles.mjs`.
+- Os parsers falham em vez de adivinhar. Uso desconhecido é omitido do contrato, nunca vira zero.
+- O prompt vai por stdin (Codex, Claude Code) ou por arquivo temporário 0600, removido depois (Droid, Devin, Muse). Cursor e Grok só aceitam o prompt como argumento, então ele fica visível na lista de processos local durante o job.
+- `--launch` cobre CLIs iniciadas como `node index.js`.
+- **Testes:** fake com os sete formatos, prompt com caracteres de shell, falha sem ecoar o prompt, erros de formato e validação de `envInherit`.
+
+Execuções reais pelo Orchestrator (`omp_agent_create` via CLI, workspace vazio, pedido para não usar ferramentas; o Codex em `-s read-only`):
+
+| Motor (versão) | Status | Tempo | Uso registrado |
+|---|---|---|---|
+| Codex (codex-cli 0.155.1) | `succeeded`, `ENGINE-CODEX-OK` | 6 s | 21.748 tokens |
+| Claude Code (2.1.280) | `succeeded`, `ENGINE-CLAUDE-OK` | 5 s | 46.109 tokens, `claude-sonnet-5`, equivalente US$ 0,0940 |
+| Droid (0.209.1) | `succeeded`, `ENGINE-DROID-OK` | 12 s | 9.960 tokens |
+| Cursor (cursor-agent 2026.09.26) | `succeeded`, `ENGINE-CURSOR-OK` | 25 s | 23.559 tokens (normalização de cache presumida) |
+| Grok (1.0.41) | `succeeded`, `ENGINE-GROK-OK` | 7 s | 28.879 tokens, `grok-4.7-build-fast`, equivalente US$ 0,0376 |
+| Devin (3000.1.27) | `succeeded`, `ENGINE-DEVIN-OK` | 8 s | desconhecido (saída só texto) |
+| Muse (1.3.0) | `succeeded`, `ENGINE-MUSE-OK` | 35 s | desconhecido (não reportado) |
