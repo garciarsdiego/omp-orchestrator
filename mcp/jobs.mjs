@@ -7,6 +7,7 @@ import {
   getJobAttempts, listJobs, newJobId, publicJob, readJob, updateJob, writeJob
 } from "./job-store.mjs";
 import { getDatabase, withImmediateTransaction } from "./storage.mjs";
+import { processAlive, workerProcess } from "./process-identity.mjs";
 import { runtimeStatus } from "./runtime.mjs";
 import { assertNoSecrets } from "./security.mjs";
 import { assertJobEstimate, estimateJobRequest } from "./budget.mjs";
@@ -45,7 +46,7 @@ function spawnWorker(id, jobRoot) {
 
 export function startJobWorker(id, jobRoot) {
   const pid = spawnWorker(id, jobRoot);
-  return updateJob(id, (current) => ({ ...current, workerPid: pid }), jobRoot);
+  return updateJob(id, (current) => ({ ...current, ...workerProcess(pid) }), jobRoot);
 }
 
 export function resolveJobTarget({ role, requestedSelector, roles = {}, models = [] } = {}) {
@@ -219,11 +220,6 @@ function stopProcessTree(pid) {
   return true;
 }
 
-function pidAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
-
 export async function cancelJob({ id, confirm = false, graceMs = 1_000, jobRoot } = {}) {
   if (!confirm) throw new Error("Cancellation requires confirm=true.");
   const job = readJob(id, jobRoot);
@@ -237,10 +233,11 @@ export async function cancelJob({ id, confirm = false, graceMs = 1_000, jobRoot 
     cancellationRequestedAt: requestedAt
   }), jobRoot);
   const deadline = Date.now() + Math.max(0, Math.min(5_000, Number(graceMs) || 1_000));
-  while (pidAlive(job.workerPid) && Date.now() < deadline) {
+  const alive = () => processAlive(job.workerPid, job.workerIdentity);
+  while (alive() && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  const terminated = pidAlive(job.workerPid) ? stopProcessTree(job.workerPid) : false;
+  const terminated = alive() ? stopProcessTree(job.workerPid) : false;
   const cancelled = updateJob(id, (current) => ({
     ...current,
     status: "cancelled",

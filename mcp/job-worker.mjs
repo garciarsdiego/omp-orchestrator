@@ -4,6 +4,7 @@ import {
 } from "./job-store.mjs";
 import { evaluateActualUsage } from "./budget.mjs";
 import { actualUsageCost } from "./pricing.mjs";
+import { workerProcess } from "./process-identity.mjs";
 import { scanForSecrets } from "./security.mjs";
 
 const invokedAsWorker = process.argv[1]?.endsWith("job-worker.mjs");
@@ -34,7 +35,7 @@ async function run() {
     ...job,
     status: "running",
     startedAt: new Date().toISOString(),
-    workerPid: process.pid,
+    ...workerProcess(process.pid),
     error: null
   }));
 

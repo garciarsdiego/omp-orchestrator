@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readJob, updateJob } from "./job-store.mjs";
 import { getRoles } from "./lib.mjs";
+import { processReused, workerProcess } from "./process-identity.mjs";
 import { parseRoleSelector } from "./gateway.mjs";
 import { estimateModelCost, sumCosts } from "./pricing.mjs";
 import {
@@ -140,8 +141,11 @@ function spawnRunWorker(id, mode = "initial") {
   return child.pid;
 }
 
-function stopProcessTree(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return;
+// A PID reused by another process (and that process's group) must never
+// receive SIGTERM. A dead leader is still signalled by group so surviving
+// children stop; Linux does not reuse a PID while its process group exists.
+function stopProcessTree(pid, identity) {
+  if (!Number.isInteger(pid) || pid <= 0 || processReused(pid, identity)) return;
   if (process.platform === "win32") {
     spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
   } else {
@@ -199,7 +203,7 @@ export async function createRun({
   writeRun(run);
   appendRunEvent(run.id, "run.created", { template: run.template, budget: run.budget });
   const pid = spawnRunWorker(run.id, "initial");
-  const updated = updateRun(run.id, (current) => ({ ...current, workerPid: pid }));
+  const updated = updateRun(run.id, (current) => ({ ...current, ...workerProcess(pid) }));
   return publicRun(updated);
 }
 
@@ -288,7 +292,7 @@ export async function attestRun({ id, verdict, findings = [], expectedArtifactSh
   }).immediate();
   if (verdict !== "revise") return result;
   const pid = spawnRunWorker(id, "finalize");
-  updateRun(id, (current) => ({ ...current, workerPid: pid }));
+  updateRun(id, (current) => ({ ...current, ...workerProcess(pid) }));
   return publicRun(readRun(id));
 }
 
@@ -323,7 +327,7 @@ export async function resumeRun({ id, budget, confirmBudget = false, confirmQuot
   }
   const pid = spawnRunWorker(id, mode);
   updateRun(id, (current) => current.resumeLease === lease && current.status === "running"
-    ? { ...current, workerPid: pid } : current);
+    ? { ...current, ...workerProcess(pid) } : current);
   return publicRun(readRun(id));
 }
 
@@ -338,12 +342,12 @@ export function cancelRun({ id, confirm = false } = {}) {
     return { ...current, status: "cancellation_requested", phase: "cancellation" };
   });
   if (run.status === "cancelled") return publicRun(run);
-  stopProcessTree(run.workerPid);
+  stopProcessTree(run.workerPid, run.workerIdentity);
   for (const node of run.nodes) {
     if (node.jobId) {
       try {
         const job = readJob(node.jobId, runJobsDir(id));
-        stopProcessTree(job.workerPid);
+        stopProcessTree(job.workerPid, job.workerIdentity);
         updateJob(node.jobId, (current) => ["queued", "running", "cancellation_requested"].includes(current.status)
           ? { ...current, status: "cancelled", workerPid: null, completedAt: new Date().toISOString() }
           : current, runJobsDir(id));

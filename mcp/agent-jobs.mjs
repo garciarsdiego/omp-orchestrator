@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { workerProcess } from "./process-identity.mjs";
 import { assertNoSecrets } from "./security.mjs";
 import { JOB_ROOT, newJobId, readJob, writeJob, updateJob } from "./job-store.mjs";
 import { STATE_ROOT, getDatabase, withImmediateTransaction } from "./storage.mjs";
@@ -166,7 +167,7 @@ export function createAgentJob({ backend, workspace, prompt, timeoutMs = 600_000
       env: { ...process.env, OMP_ORCHESTRATOR_ACCESS_TOKEN_FILE: "" }
     });
     child.unref();
-    return publicAgentJob(updateJob(job.job.id, (current) => ({ ...current, workerPid: child.pid })));
+    return publicAgentJob(updateJob(job.job.id, (current) => ({ ...current, ...workerProcess(child.pid) })));
   } catch (error) {
     updateJob(job.job.id, (current) => ({
       ...current, status: "failed", completedAt: new Date().toISOString(),

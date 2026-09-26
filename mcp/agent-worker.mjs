@@ -2,6 +2,7 @@ import { startOmpRpc } from "./backends/omp-rpc.mjs";
 import { runCommandJob } from "./backends/command-json.mjs";
 import { appendAgentEvent, resolveBackend } from "./agent-jobs.mjs";
 import { finalizeJobWithLedger, readJob, updateJob } from "./job-store.mjs";
+import { workerProcess } from "./process-identity.mjs";
 import { assertNoSecrets } from "./security.mjs";
 
 const id = process.argv[2];
@@ -26,7 +27,7 @@ async function run() {
   const starting = updateJob(id, (job) => {
     if (!job.backend || job.status !== "queued") return job;
     claimed = true;
-    return { ...job, status: "running", startedAt: new Date().toISOString(), workerPid: process.pid };
+    return { ...job, status: "running", startedAt: new Date().toISOString(), ...workerProcess(process.pid) };
   });
   if (!claimed) return;
   appendAgentEvent(id, "agent.started", { backend: starting.backend });

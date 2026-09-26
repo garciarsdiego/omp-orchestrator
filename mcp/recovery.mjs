@@ -1,14 +1,5 @@
+import { processAlive } from "./process-identity.mjs";
 import { getDatabase } from "./storage.mjs";
-
-function pidAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export function reconcileInterruptedWork() {
   const db = getDatabase();
@@ -22,7 +13,7 @@ export function reconcileInterruptedWork() {
       // The sidecar reconciles those PIDs; the HTTP container must not infer
       // their death by testing a number in its own namespace.
       if (job.backend && process.env.OMP_ORCHESTRATOR_AGENT_DISPATCH === "external") continue;
-      if (pidAlive(job.workerPid)) continue;
+      if (processAlive(job.workerPid, job.workerIdentity)) continue;
       job.status = "interrupted";
       job.completedAt = now;
       job.updatedAt = now;
@@ -38,7 +29,7 @@ export function reconcileInterruptedWork() {
     }
     for (const row of db.prepare("SELECT id, payload FROM runs WHERE status IN ('running', 'cancellation_requested')").all()) {
       const run = JSON.parse(row.payload);
-      if (pidAlive(run.workerPid)) continue;
+      if (processAlive(run.workerPid, run.workerIdentity)) continue;
       run.status = "interrupted";
       run.interruptedFromPhase = run.phase;
       run.phase = "interrupted";
@@ -55,7 +46,8 @@ export function reconcileInterruptedWork() {
         const job = jobRow && JSON.parse(jobRow.payload);
         // A surviving child owns the paid request. Preserve the node/job link
         // so resumeRun attaches to it rather than spawning a duplicate.
-        if (job && ["queued", "running"].includes(job.status) && pidAlive(job.workerPid)) return node;
+        if (job && ["queued", "running"].includes(job.status)
+          && processAlive(job.workerPid, job.workerIdentity)) return node;
         return { ...node, status: "interrupted", completedAt: now };
       });
       db.prepare("UPDATE runs SET status = ?, phase = ?, updated_at = ?, worker_pid = NULL, payload = ? WHERE id = ?")

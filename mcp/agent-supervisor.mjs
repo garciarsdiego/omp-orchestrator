@@ -6,15 +6,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { SUPERVISOR_HEARTBEAT } from "./agent-jobs.mjs";
 import { getDatabase, STATE_ROOT } from "./storage.mjs";
 import { readJob, updateJob } from "./job-store.mjs";
+import { processAlive, workerProcess } from "./process-identity.mjs";
 
 const WORKER = fileURLToPath(new URL("./agent-worker.mjs", import.meta.url));
 const OWNER = randomUUID();
 let ticking = false;
-
-function pidAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
 
 function heartbeat() {
   mkdirSync(STATE_ROOT, { recursive: true, mode: 0o700 });
@@ -28,9 +24,10 @@ function reconcileAgentChildren() {
     WHERE status IN ('running','cancellation_requested') AND json_extract(payload,'$.backend') IS NOT NULL`).all();
   for (const row of rows) {
     const job = JSON.parse(row.payload);
-    if (pidAlive(job.workerPid)) continue;
+    if (processAlive(job.workerPid, job.workerIdentity)) continue;
     updateJob(job.id, (current) => {
-      if (!["running", "cancellation_requested"].includes(current.status) || pidAlive(current.workerPid)) return current;
+      if (!["running", "cancellation_requested"].includes(current.status)
+        || processAlive(current.workerPid, current.workerIdentity)) return current;
       return { ...current, status: "interrupted", workerPid: null, completedAt: new Date().toISOString(),
         error: { name: "InterruptedError", message: "Agent worker exited before a terminal result. No automatic replay." } };
     });
@@ -42,7 +39,7 @@ function dispatchAgent(id) {
   const claimId = randomUUID();
   updateJob(id, (job) => {
     const previous = job.dispatchClaim;
-    if (!job.backend || job.status !== "queued" || pidAlive(job.workerPid)
+    if (!job.backend || job.status !== "queued" || processAlive(job.workerPid, job.workerIdentity)
       || previous && Date.now() - Date.parse(previous.at) < 30_000) return job;
     claimed = true;
     return { ...job, dispatchClaim: { id: claimId, owner: OWNER, at: new Date().toISOString() } };
@@ -55,7 +52,7 @@ function dispatchAgent(id) {
     });
     child.unref();
     updateJob(id, (job) => job.dispatchClaim?.id === claimId
-      ? { ...job, workerPid: child.pid } : job);
+      ? { ...job, ...workerProcess(child.pid) } : job);
   } catch {
     updateJob(id, (job) => job.dispatchClaim?.id === claimId
       ? { ...job, status: "failed", completedAt: new Date().toISOString(),
