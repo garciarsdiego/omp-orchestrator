@@ -282,7 +282,9 @@ export async function attestRun({ id, verdict, findings = [], expectedArtifactSh
       completedAt: verdict === "revise" ? null : at,
       workerPid: null,
       error: verdict === "revise" ? null : current.error,
-      nodes: current.nodes.map((node) => node.id === "codex" ? { ...node, status: nodeStatus, verdict, completedAt: at } : node)
+      // Match by type: runs created before the rename use node id "codex".
+      nodes: current.nodes.map((node) => node.type === "attestation" || node.id === "codex"
+        ? { ...node, status: nodeStatus, verdict, completedAt: at } : node)
     }));
     appendRunEvent(id, "review.attested", { verdict, findingCount: normalizedFindings.length, artifactSha256: artifact.sha256 });
     if (verdict === "accept") appendRunEvent(id, "run.succeeded", { artifact: artifact.name });

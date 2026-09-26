@@ -108,7 +108,7 @@ step "synthetic run artifact (backup coverage)"
 read -r run_id sha < <(dc exec -T orchestrator node --input-type=module -e '
   const runs = await import("/opt/omp-orchestrator/mcp/run-store.mjs");
   const now = new Date().toISOString(); const id = runs.newRunId();
-  runs.writeRun({ id, template: "compose-smoke", status: "awaiting_codex", phase: "attestation", budget: {},
+  runs.writeRun({ id, template: "compose-smoke", status: "awaiting_review", phase: "attestation", budget: {},
     estimate: {}, usage: {}, nodes: [], artifacts: [], createdAt: now, updatedAt: now, completedAt: null, workerPid: null });
   console.log(id + " " + runs.writeArtifact(id, "smoke.txt", "compose restore evidence").sha256);')
 check "artifact written" test "${#sha}" = 64

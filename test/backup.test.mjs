@@ -21,7 +21,7 @@ test("backup packages the online SQLite snapshot and CAS artifacts for verified 
   const now = new Date().toISOString();
   const runId = runs.newRunId();
   runs.writeRun({
-    id: runId, template: "test", status: "awaiting_codex", phase: "attestation", budget: {}, estimate: {}, usage: {}, nodes: [],
+    id: runId, template: "test", status: "awaiting_review", phase: "attestation", budget: {}, estimate: {}, usage: {}, nodes: [],
     artifacts: [], createdAt: now, updatedAt: now, completedAt: null, workerPid: null
   });
   const artifact = runs.writeArtifact(runId, "artifact.txt", "restorable artifact");

@@ -197,6 +197,17 @@ function migrate(db) {
       JOIN jobs j ON j.id = ja.job_id
       WHERE ja.usage_json IS NOT NULL;
     `
+  }, {
+    version: 3,
+    name: "neutral_review_status",
+    // Review is not tied to one client. Code keeps accepting the legacy status
+    // (and the legacy "codex" attestation node id), so an older image can
+    // still read and attest runs written by this schema.
+    sql: `
+      UPDATE runs
+      SET status = 'awaiting_review', payload = json_set(payload, '$.status', 'awaiting_review')
+      WHERE status = 'awaiting_codex';
+    `
   }];
   const beforeLock = new Set(db.prepare("SELECT version FROM schema_migrations").all().map((row) => row.version));
   const pendingBeforeLock = migrations.filter((migration) => !beforeLock.has(migration.version));

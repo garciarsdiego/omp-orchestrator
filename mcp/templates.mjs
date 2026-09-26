@@ -1,14 +1,14 @@
 const templates = {
   "multi-model-build-review": {
     id: "multi-model-build-review",
-    description: "Parallel planning and design, artifact generation, deterministic validation, and Codex attestation.",
+    description: "Parallel planning and design, artifact generation, deterministic validation, and reviewer attestation.",
     nodes: [
       { id: "plan", type: "inference", role: "plan", contract: "notes", maxOutputTokens: 2500, estimatedInputTokens: 1500 },
       { id: "design", type: "inference", role: "designer", contract: "notes", maxOutputTokens: 2500, estimatedInputTokens: 1500, fallbackRole: "plan" },
       { id: "candidate", type: "inference", role: "default", contract: "standalone_html", maxOutputTokens: 19500, estimatedInputTokens: 8000, dependsOn: ["plan", "design"], fallbackRole: "designer" },
       { id: "validate", type: "validator", dependsOn: ["candidate"] },
-      { id: "codex", type: "attestation", dependsOn: ["validate"] },
-      { id: "finalize", type: "inference", role: "default", contract: "standalone_html", maxOutputTokens: 19500, estimatedInputTokens: 14000, conditional: true, dependsOn: ["codex"] }
+      { id: "review", type: "attestation", dependsOn: ["validate"] },
+      { id: "finalize", type: "inference", role: "default", contract: "standalone_html", maxOutputTokens: 19500, estimatedInputTokens: 14000, conditional: true, dependsOn: ["review"] }
     ],
     defaultBudget: {
       maxCalls: 5,
@@ -26,11 +26,11 @@ const templates = {
   },
   "independent-analysis": {
     id: "independent-analysis",
-    description: "Two independent analytical notes for Codex reconciliation.",
+    description: "Two independent analytical notes for reviewer reconciliation.",
     nodes: [
       { id: "analysis-a", type: "inference", role: "plan", contract: "notes", maxOutputTokens: 3000, estimatedInputTokens: 2000 },
       { id: "analysis-b", type: "inference", role: "advisor", contract: "notes", maxOutputTokens: 3000, estimatedInputTokens: 2000 },
-      { id: "codex", type: "attestation", dependsOn: ["analysis-a", "analysis-b"] }
+      { id: "review", type: "attestation", dependsOn: ["analysis-a", "analysis-b"] }
     ],
     defaultBudget: {
       maxCalls: 2,

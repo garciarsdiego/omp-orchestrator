@@ -68,7 +68,7 @@ function sampleRun(id = runs.newRunId()) {
 test("storage initializes a versioned SQLite WAL database", () => {
   const status = storage.storageStatus();
   assert.equal(status.journalMode, "wal");
-  assert.equal(status.schemaVersion, 2);
+  assert.equal(status.schemaVersion, 3);
   assert.match(status.databasePath, /orchestrator\.sqlite$/);
   const tables = storage.getDatabase().prepare(
     "SELECT name FROM sqlite_master WHERE type = 'table'"
@@ -163,7 +163,7 @@ test("runs reconcile orphaned nodes without repeating completed checkpoints", ()
 
 test("content-addressed artifacts deduplicate and referenced objects survive GC", () => {
   const run = sampleRun();
-  run.status = "awaiting_codex";
+  run.status = "awaiting_review";
   runs.writeRun(run);
   const first = runs.writeArtifact(run.id, "first.txt", "same content");
   const second = runs.writeArtifact(run.id, "second.txt", "same content");
@@ -255,9 +255,9 @@ test("concurrent first initialization applies migrations once", async () => {
   const code = `
     import { getDatabase, storageStatus } from "./mcp/storage.mjs";
     const db = getDatabase();
-    if (storageStatus().schemaVersion !== 2) process.exit(3);
+    if (storageStatus().schemaVersion !== 3) process.exit(3);
     if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'").get()) process.exit(4);
-    if (db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get().count !== 2) process.exit(5);
+    if (db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get().count !== 3) process.exit(5);
   `;
   const workers = Array.from({ length: 8 }, () => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", code], {
@@ -272,6 +272,37 @@ test("concurrent first initialization applies migrations once", async () => {
     child.once("error", reject);
   }));
   await Promise.all(workers);
+});
+
+test("schema v3 migrates legacy review status and backs up the v2 file", async () => {
+  const stateDir = path.join(root, "v2-upgrade");
+  const runInit = (code) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", code], {
+      cwd: process.cwd(), env: { ...process.env, OMP_ORCHESTRATOR_STATE_DIR: stateDir },
+      windowsHide: true, stdio: ["ignore", "pipe", "pipe"]
+    });
+    let out = ""; let err = "";
+    child.stdout.on("data", (chunk) => { out += chunk; });
+    child.stderr.on("data", (chunk) => { err += chunk; });
+    child.once("exit", (status) => status === 0 ? resolve(out.trim()) : reject(new Error(`exit ${status}: ${err}`)));
+  });
+  // Build a database as a v2 image left it: no v3 row, legacy status stored.
+  await runInit(`
+    import { getDatabase, closeDatabase } from "./mcp/storage.mjs";
+    const db = getDatabase();
+    db.prepare("DELETE FROM schema_migrations WHERE version = 3").run();
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO runs(id, template, status, phase, created_at, updated_at, worker_pid, payload) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)")
+      .run("legacy-run", "t", "awaiting_codex", "attestation", now, now, JSON.stringify({ id: "legacy-run", status: "awaiting_codex" }));
+    closeDatabase();
+  `);
+  const result = JSON.parse(await runInit(`
+    import { existsSync } from "node:fs";
+    import { DATABASE_PATH, getDatabase, storageStatus } from "./mcp/storage.mjs";
+    const row = getDatabase().prepare("SELECT status, json_extract(payload, '$.status') AS payloadStatus FROM runs WHERE id = 'legacy-run'").get();
+    console.log(JSON.stringify({ ...row, version: storageStatus().schemaVersion, backup: existsSync(DATABASE_PATH + ".bak-v2") }));
+  `));
+  assert.deepEqual(result, { status: "awaiting_review", payloadStatus: "awaiting_review", version: 3, backup: true });
 });
 
 test("legacy migration is dry-run by default, explicit, and idempotent", () => {
