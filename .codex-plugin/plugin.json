@@ -1,6 +1,6 @@
 {
   "name": "omp-orchestrator",
-  "version": "0.8.0-preview.2",
+  "version": "0.8.0-preview.3",
   "description": "Codex-led orchestration over the locally installed Oh My Pi multi-provider runtime.",
   "author": {
     "name": "Diego"
