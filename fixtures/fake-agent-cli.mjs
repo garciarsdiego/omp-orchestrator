@@ -11,8 +11,12 @@ const file = after("-f") ?? after("--prompt-file");
 if (file) {
   if (!existsSync(file)) { process.stderr.write("prompt file missing\n"); process.exit(3); }
   prompt = readFileSync(file, "utf8");
-} else if (format === "grok") prompt = after("-p");
-else if (format === "cursor" || format === "codex") {
+} else if (format === "grok") {
+  // grok 1.0.41: -p/--single takes a value, and "--" or a dash-leading value
+  // leaves it without one.
+  prompt = after("-p");
+  if (!prompt || prompt.startsWith("-")) { process.stderr.write("a value is required for '--single <PROMPT>'\n"); process.exit(2); }
+} else if (format === "cursor") {
   // Like the real option parsers: a positional that starts with "-" is an
   // option unless it comes after "--".
   const end = args.indexOf("--");

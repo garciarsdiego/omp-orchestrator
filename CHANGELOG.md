@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0-preview.3 — Unreleased
+
+- **Breaking (Compose):** the access token is mounted as a directory. `OMP_ORCHESTRATOR_TOKEN_DIR` (default `./secrets`, file `access-token` inside) replaces `OMP_ORCHESTRATOR_TOKEN_FILE`, which is no longer read. A single-file bind kept the old inode, so an atomic rotation (temp file + `mv`) never reached the container; the smoke test now rotates by `mv` without a restart.
+- Cursor usage: `inputTokens` excludes cache. A real run reported 4 input tokens next to 26,032 cache reads and 9,550 cache writes, so the counters are summed (`cursor-exclusive-cache`), replacing the inclusive partition that under-counted by three orders of magnitude.
+- Codex reads the prompt from stdin again (`codex exec -`) and Grok from a private temp file (`--prompt-file`), so neither shows it in the process list. Cursor, the only CLI still taking it as an argument, gets it after `--`, so a prompt starting with `-` is not parsed as an option. Devin runs headless with `--respect-workspace-trust false`.
+- `test/compose/gate2.sh` gains `FAKE=1` (run in CI) and `OMP_GATE2_ENV_FILE`, which passes only named engine keys to the sidecar. A second workflow rehearses upgrade and rollback against the pull request base whenever `SCHEMA_VERSION` changes.
+- OMP stays pinned to 18.3.2, the latest release on 2026-09-26.
+- A failed agent job records `agent.failed` with its error code, exit status and the end of stderr (prompt redacted, secret patterns withheld).
+- `test/compose/gate2.sh` runs the real engines in the Linux sidecar. All eight (OMP RPC, Codex, Claude Code, Droid, Cursor, Grok, Devin, Muse) completed there.
+
 ## 0.8.0-preview.2 — Unreleased
 
 - Fixed job listing (`/api/overview` returned HTTP 500), intermittent `SQLITE_BUSY` during concurrent first start, and an invalid console `pattern` that disabled client-side workspace validation.

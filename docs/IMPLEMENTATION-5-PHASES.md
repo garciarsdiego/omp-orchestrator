@@ -379,3 +379,42 @@ As execuções anteriores da mesma sessão (layout antigo) também tiveram omp-r
 **Verificações:** `npm run lint` limpo; Windows 117 passaram + 2 omitidos (Linux); imagem Linux `omp-orchestrator:check` 119/119; `test/compose/smoke.sh` `SMOKE OK` no HEAD, duas vezes. Sem migração: `upgrade-rollback.sh` não se aplica.
 
 **Limpeza:** stacks `omp-gate2`/`omp-browser`, container `omp-prom`, diretórios de QA e o volume vazio `omp-gate2-omp-home` (sessão anterior) removidos.
+
+
+### 14. Rodada de 26/09/2026, noite (branch `codex/omp-round14`)
+
+Autorizado nesta sessão: merge do #4; quota para os motores restantes e sondas curtas; credenciais das CLIs tiradas do Windows; push; mudanças no CI; token por diretório; subir o OMP; uso só como observação. Continuam fora: VPS, TLS e release.
+
+- **Merge do #4** em `b978e19`, com o CI verde em `c75a40b`. Branch nova `codex/omp-round14` a partir de `origin/main`.
+- **Credenciais do Windows para o WSL** (arquivos 0600, conteúdo nunca impresso):
+  - Grok: `~/.grok/auth.json`;
+  - Cursor: `%APPDATA%\Cursor\auth.json` → `~/.config/cursor/auth.json`;
+  - Devin: `%APPDATA%\devin\credentials.toml` → `~/.local/share/devin/credentials.toml`;
+  - Droid: `FACTORY_API_KEY` do `.env` do OMP do Windows, filtrado por nome para um arquivo do QA e carregado só pelo sidecar (`OMP_GATE2_ENV_FILE`).
+  - Risco: WSL e Windows passam a compartilhar a mesma sessão. Se um lado renovar um refresh token rotativo, o outro pode precisar de novo login.
+- **`251c715` — uso do Cursor.** No sidecar, o `usage` cru trouxe `inputTokens` 4, `cacheReadTokens` 26.032 e `cacheWriteTokens` 9.550. O cache não particiona `inputTokens`, então a hipótese inclusiva da rodada 11 (`pi-cursor-sdk`) estava errada para a cursor-agent 2026.09.26, e o clamp escondeu o erro: o gate gravou 19 tokens em vez de 35.599. A normalização agora soma os contadores (`cursor-exclusive-cache`), e o teste usa os números reais. De ponta a ponta, o job registrou 35.615 tokens.
+- **Codex por stdin (`fbfb397`).** `codex exec … -` com o prompt no stdin funcionou no sidecar (`STDIN-ONLY-OK`) e no Windows pelo adaptador (`WIN-STDIN-OK`, 21.713 tokens). O bloco `<stdin>` do `989309a` só aparece quando também há prompt em argumento. O prompt saiu da lista de processos.
+- **Grok (`3f6f5e4`, `f5cf554`).** Um prompt com `-` inicial era recusado. O `--` antes do prompt também não serve, porque `-p` é `--single <PROMPT>` e exige valor (falhou no gate). Agora vai por `--prompt-file`, arquivo temporário 0600, aceito pelo 1.0.41 no Linux e no Windows. O fake reproduz a regra do `-p`. Validado: `DASH-OK` no sidecar e `WIN-GROK-FILE-OK` no Windows. Só o Cursor ainda recebe o prompt por argumento, e um teste fixa isso.
+- **Devin (`3f6f5e4`).** No modo `-p`, ele recusa um diretório não confiável e não consegue perguntar. O perfil passa `--respect-workspace-trust false`, aceito pela 3000.11.3 (Linux) e pela 3000.1.27 (Windows).
+- **Cursor sem cota** no modelo padrão da conta ("You're out of usage. Switch to Auto"). O catálogo do gate fixa `--model auto`.
+- **`b076035` — token por diretório (quebra).** O Compose monta `${OMP_ORCHESTRATOR_TOKEN_DIR:-./secrets}` em `/run/omp-orchestrator/secrets`, e `OMP_ORCHESTRATOR_TOKEN_FILE` não é mais lida. O smoke rotaciona por `mv` sem restart: token novo e operador com 200. `DEPLOY-VPS.md` e `OBSERVABILITY.md` voltaram à rotação atômica.
+- **`eff0227` — CI.** O job `image` roda `FAKE=1 test/compose/gate2.sh`: 8 ids pelo adaptador, CLI fake e RPC fake no sidecar Linux. O workflow `upgrade-rollback.yml` roda o ensaio contra a base do PR quando `SCHEMA_VERSION` muda.
+- **OMP:** 18.3.2 continua sendo a última release (26/09/2026 00:00 UTC); o SHA-256 da release confere com o do `Dockerfile`. Nada a subir.
+- **`2fb6cd9`** — versão `0.8.0-preview.3`, com changelog.
+
+**Gate 1 concluído: 8/8 numa única execução** do `gate2.sh`, no código final, dentro do container Linux:
+
+| Motor | Tempo | Tokens registrados |
+|---|---|---|
+| omp-rpc `opencode-go/muse-spark-1.3-contributor --thinking high` | 6 s | 9.086 |
+| Codex 0.155.1 (stdin) | 10 s | 13.486 |
+| Claude Code 2.1.283 | 5 s | 25.646 |
+| Droid 0.228.0 (`FACTORY_API_KEY`) | 15 s | 7.333 |
+| Cursor 2026.09.26 (`--model auto`, cache exclusivo) | 20 s | 35.615 |
+| Grok 1.0.41 (`--prompt-file`) | 10 s | 21.910 |
+| Devin 3000.11.3 | 10 s | desconhecido (sem uso) |
+| Muse | 15 s | desconhecido (sem uso) |
+
+**Verificações:** `npm run lint` limpo; Windows 117 + 2 omitidos; imagem Linux 119/119; `smoke.sh` `SMOKE OK`, com rotação por `mv`; `FAKE=1 gate2.sh` `GATE2 OK`. `upgrade-rollback.sh` de `b978e19` para o HEAD passou até "new image ready" e parou em "schema advanced (4 -> 4)", como esperado sem migração. O novo workflow não roda o ensaio nesse caso.
+
+**Não validado:** `upgrade-rollback.yml` no GitHub (só dispara em PR que toca storage); alertas em `firing`; VPS/TLS.

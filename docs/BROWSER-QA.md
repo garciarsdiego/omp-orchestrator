@@ -56,7 +56,7 @@ Se o backend `fake-command` não existir nessa instalação, crie
    - [ ] overview lista runs / jobs / agents (o job `browser-qa-001` aparece?);
    - [ ] métricas do topo atualizam após Refresh;
    - [ ] seletor de motor mostra `id · tipo · perfil` e `· sem uso` quando `usageReported=false`;
-   - [ ] passe o mouse no seletor: o `title` mostra o `cacheBehavior` (ex.: Cursor `cursor-inclusive-cache-partition`);
+   - [ ] passe o mouse no seletor: o `title` mostra o `cacheBehavior` (ex.: Cursor `cursor-exclusive-cache`);
    - [ ] clique numa run → painel mostra `omp_run_get`;
    - [ ] artifact abre como **texto** (`textContent`), sem HTML executado;
    - [ ] `omp_agent_backends` no painel Ferramentas mostra `usageSemantics` por backend;

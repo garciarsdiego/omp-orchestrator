@@ -22,13 +22,13 @@ curl -i http://127.0.0.1:8080/healthz
 curl -i -H "Authorization: Bearer $(cat secrets/access-token)" http://127.0.0.1:8080/readyz
 ```
 
-A imagem executa como o usuário `node` (UID 1000). O arquivo de token montado com permissão `0600` deve ser legível por esse UID no host; em uma VPS, crie-o com o usuário de UID 1000 ou ajuste a propriedade do arquivo antes de subir. Não torne o token legível por todos para contornar uma falha de permissão.
+A imagem executa como o usuário `node` (UID 1000). O Compose monta o **diretório** `secrets/` (somente leitura) em `/run/omp-orchestrator/secrets`; o diretório e o arquivo de token, com permissão `0600`, devem ser legíveis por esse UID no host; em uma VPS, crie-o com o usuário de UID 1000 ou ajuste a propriedade do arquivo antes de subir. Não torne o token legível por todos para contornar uma falha de permissão.
 
 O primeiro endpoint verifica que o processo HTTP responde. `readyz` exige token, abre o storage e confirma um heartbeat recente do sidecar; pode retornar 503 nos primeiros segundos da subida. Em 25/09/2026, build e Compose passaram no Docker via WSL/Ubuntu: health/ready 200, sem token 401, OMP18.3.2, job fake no sidecar e restore de artifact em outro mount. Nenhum provedor real ou VPS foi usado.
 
 O Compose usa `${OMP_ORCHESTRATOR_PUBLIC_ORIGIN:-http://127.0.0.1:8080}`: a variável exportada no comando substitui a origem padrão de loopback. Mantenha a publicação host em loopback para a configuração local. Os volumes nomeados `omp-state` e `omp-workspaces` preservam respectivamente estado/SQLite/objetos e diretórios de trabalho; `OMP_ORCHESTRATOR_WORKSPACE_ROOT=/workspaces` faz os jobs de agente usarem o segundo volume.
 
-`OMP_ORCHESTRATOR_HOST_PORT` altera a porta publicada no loopback, e `OMP_ORCHESTRATOR_TOKEN_FILE` permite montar um arquivo de token fora do diretório do projeto. Se mudar a porta, ajuste também `OMP_ORCHESTRATOR_PUBLIC_ORIGIN`. `docker compose ps` deve mostrar `orchestrator` e `agent-worker` saudáveis. O sidecar não publica porta e só executa jobs já registrados no SQLite.
+`OMP_ORCHESTRATOR_HOST_PORT` altera a porta publicada no loopback, e `OMP_ORCHESTRATOR_TOKEN_DIR` permite montar um diretório de token fora do projeto (o arquivo dentro dele se chama `access-token`). **Mudança na 0.8.0-preview.3:** a variável antiga `OMP_ORCHESTRATOR_TOKEN_FILE` não é mais lida; quem a usava deve mover o arquivo para um diretório próprio e apontar `OMP_ORCHESTRATOR_TOKEN_DIR` para ele. Não aponte para um diretório com outros segredos: tudo nele fica visível ao serviço HTTP. Se mudar a porta, ajuste também `OMP_ORCHESTRATOR_PUBLIC_ORIGIN`. `docker compose ps` deve mostrar `orchestrator` e `agent-worker` saudáveis. O sidecar não publica porta e só executa jobs já registrados no SQLite.
 
 Para usar `omp-rpc`, autentique o OMP **no ambiente do sidecar** depois de subir a instalação, seguindo a [documentação do OMP 18.3.2](https://raw.githubusercontent.com/can1357/oh-my-pi/7853b4e499936f9dcc13c9b64adb55f6b342aabf/docs/providers.md). Por exemplo, `docker compose exec agent-worker omp login <provider>` inicia o fluxo interativo; `docker compose exec agent-worker omp models --json` permite inspecionar a disponibilidade. Faça a autenticação na instalação de destino com o provedor desejado. Um login no Codex ou no computador local não provisiona automaticamente o container.
 
@@ -62,7 +62,7 @@ printf 'ana:%s\n' "$(openssl rand -base64 48 | tr -d '\n')" >> secrets/access-to
 # distribua o novo token; quando ninguém mais usar o antigo, remova a linha dele
 ```
 
-**Reescreva o arquivo no lugar** (`cat novo > secrets/access-token`), nunca com `mv`. O Compose monta o token como arquivo único: um `mv` troca o inode no host, e o container continua lendo o arquivo antigo até reiniciar. Isso foi medido em 26/09/2026: depois do `mv`, o token novo recebia 401. A reescrita no lugar não é atômica, mas uma leitura parcial é só uma versão inválida. Confira o token novo com `curl` antes de remover o antigo. Se a versão nova for inválida (vazia, token curto, duplicado), o servidor registra o erro e **mantém os tokens anteriores**, para não bloquear os operadores. Um único token numa linha sem nome continua funcionando e aparece como `default`.
+Escreva a versão nova de forma atômica: arquivo temporário **no mesmo diretório** e `mv`. Isso funciona porque o Compose monta o diretório, não o arquivo. Com o arquivo único montado, um `mv` trocava o inode e o container seguia lendo o arquivo antigo (medido em 26/09/2026, token novo com 401). `test/compose/smoke.sh` verifica a rotação por `mv` sem restart. Confira o token novo com `curl` antes de remover o antigo. Se a versão nova for inválida (vazia, token curto, duplicado), o servidor registra o erro e **mantém os tokens anteriores**, para não bloquear os operadores. Um único token numa linha sem nome continua funcionando e aparece como `default`.
 
 ## Métricas
 

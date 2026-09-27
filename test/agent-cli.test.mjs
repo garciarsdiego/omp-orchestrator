@@ -33,11 +33,11 @@ test("each CLI profile reaches the prompt its way and normalizes usage", async (
     source: "claude-code", models: ["fake-sonnet"], equivalentCostUsd: 0.01
   });
   assert.equal(results.droid.usage.providerCredits, 7);
-  // Cursor fixture: inputTokens 20 is the full prompt, 5 cached. The
-  // normalized total must not double-count cache (20 + 3, not 25 + 3).
+  // Cursor fixture: inputTokens 20 is uncached input; the 5 cache reads are
+  // exclusive of it and are summed in (20 + 5 + 3).
   assert.deepEqual(results.cursor.usage, {
-    input_tokens: 20, input_tokens_details: { cached_tokens: 5 }, output_tokens: 3, total_tokens: 23,
-    source: "cursor-agent", normalization: "cursor-inclusive-cache-partition"
+    input_tokens: 25, input_tokens_details: { cached_tokens: 5 }, output_tokens: 3, total_tokens: 28,
+    source: "cursor-agent", normalization: "cursor-exclusive-cache"
   });
   assert.equal(results.grok.usage.total_tokens, 38);
   assert.equal(results.devin.usage, null, "plain-text CLI usage stays unknown");
@@ -51,28 +51,39 @@ test("a prompt that looks like an option still reaches every CLI as the prompt",
   for (const name of Object.keys(CLI_PROFILES)) assert.equal((await run(name, prompt)).output, `received:${prompt}`, name);
 });
 
-test("adapter capabilities report cursor cache as an inclusive partition", () => {
+test("adapter capabilities report cursor cache as exclusive counters", () => {
   const byProfile = Object.fromEntries(cliCapabilities().map((entry) => [entry.profile, entry]));
   for (const [name, entry] of Object.entries(byProfile)) {
     assert.equal(typeof entry.usageSemantics, "string", name);
     assert.equal(typeof entry.cacheBehavior, "string", name);
     assert.equal(entry.usageUnknownAs.includes("zero"), true, name);
   }
-  assert.equal(byProfile.cursor.usageSemantics, "cursor-inclusive-cache-partition");
-  assert.match(byProfile.cursor.cacheBehavior, /full prompt.*partition/i);
+  assert.equal(byProfile.cursor.usageSemantics, "cursor-exclusive-cache");
+  assert.match(byProfile.cursor.cacheBehavior, /exclusive/i);
   assert.equal(byProfile.claude.usageSemantics, "anthropic-exclusive-cache");
   assert.equal(byProfile.devin.usageReported, false);
+  // Headless CLIs that gate on workspace trust are told the workspace is trusted.
+  assert.deepEqual(CLI_PROFILES.devin.args([], "prompt.txt").slice(1, 3), ["--respect-workspace-trust", "false"]);
+  assert.ok(CLI_PROFILES.cursor.args([], "x").includes("--trust"));
+  // Codex reads the whole prompt from stdin ("-") and never gets it as an argument.
+  assert.equal(CLI_PROFILES.codex.promptVia, "stdin");
+  assert.equal(CLI_PROFILES.codex.args(["-s", "read-only"], "PROMPT").at(-1), "-");
+  assert.equal(byProfile.codex.promptDelivery, "stdin");
+  // Only cursor still takes the prompt as an argument.
+  assert.deepEqual(Object.keys(CLI_PROFILES).filter((name) => CLI_PROFILES[name].promptVia === "argv"), ["cursor"]);
   // A cursor document without usage stays unknown instead of zero.
   assert.equal(cliProfile("cursor").parse(JSON.stringify({
     type: "result", subtype: "success", is_error: false, result: "ok"
   })).usage, null);
-  // Cache can never exceed the full prompt after clamping.
-  const over = cliProfile("cursor").parse(JSON.stringify({
+  // Real cursor-agent 2026.09.26 usage (gate 2, 26/09/2026): cache counters
+  // far exceed inputTokens, so they cannot partition it.
+  const real = cliProfile("cursor").parse(JSON.stringify({
     type: "result", subtype: "success", is_error: false, result: "ok",
-    usage: { inputTokens: 10, outputTokens: 1, cacheReadTokens: 8, cacheWriteTokens: 9 }
+    usage: { inputTokens: 4, outputTokens: 13, cacheReadTokens: 26032, cacheWriteTokens: 9550 }
   })).usage;
-  assert.equal(over.input_tokens_details.cached_tokens, 10);
-  assert.equal(over.total_tokens, 11);
+  assert.equal(real.input_tokens, 35586);
+  assert.equal(real.input_tokens_details.cached_tokens, 26032);
+  assert.equal(real.total_tokens, 35599);
 });
 
 test("a failing CLI surfaces an error without echoing the prompt", async () => {
